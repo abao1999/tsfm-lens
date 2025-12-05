@@ -1,0 +1,50 @@
+# NOTE: Currently used in scripts/induction_ablation.py and scripts/rrt_induction_scores.py
+induction_scores:
+  vocab_range: [1911, 2187]
+  batch_size: 64
+  num_unique_sequences: 1
+  repeat_factors: [2, 4, 6, 8]
+  sequence_lengths: [3, 4, 6, 8, 16, 32, 64]
+  extension: 0
+  sub_extension: 1
+  # eventually can move this out since it is shared by both induction_scores and induction_ablation
+  model_names:
+    - "amazon/chronos-t5-mini"
+    - "amazon/chronos-t5-small"
+    - "amazon/chronos-t5-base"
+    - "amazon/chronos-t5-large"
+  rrt_scores_dir: "rrt_induction_scores"
+
+induction_ablation:
+  forecast_cutoff: 300
+  forecast_length: 50
+  model_names:
+    - "amazon/chronos-t5-base"
+  induction_config: ["rf8_sl64"]
+  num_samples: 144
+  ablation_methods: ["zero", "mean", "zero_r", "mean_r", "zero_s", "mean_s"]
+  ablation_results_dir: "ablation_results"
+  # Systems and their corresponding start times
+  systems:
+    # - name: "Lorenz"
+    #   start_times: [500, 2000]
+    # - name: "Thomas"
+    #   start_times: [0, 2000]
+    - name: "Aizawa"
+      start_times: [2000]
+  # Attention types to test
+  attention_types: ["ca"]
+
+
+# NOTE: this config is used in scripts/rrt_induction_scores_dev.py, as a temporary solution that we will eventually use as the default
+induction:
+  vocab_range: [1911, 2187]
+  batch_size: 64
+  num_unique_sequences: 1
+  repeat_factors: [2, 4, 6, 8]
+  sequence_lengths: [3, 4, 6, 8, 16, 32, 64]
+  extension: 0
+  sub_extension: 1
+  # eventually can move this out since it is shared by both induction_scores and induction_ablation
+  model_name: "amazon/chronos-t5-base"
+  rrt_scores_dir: "rrt_induction_scores"

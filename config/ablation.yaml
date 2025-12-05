@@ -1,0 +1,56 @@
+ablation:
+
+  model_name_str: null
+  model_type: null
+
+  ablations_types: null
+  ablations_layers_lst: null
+  ablate_n_heads_per_layer: null
+  head_selection_strategy: random
+    # "random": Randomly select heads to ablate
+    # "srank" : Select heads based on stable rank of the kernel matrix
+
+  # Device configuration
+  device: cuda 
+
+
+# NOTE: this could be legacy code, decide whether to keep
+ablation_mosaic:
+
+  # Model configuration
+  model_name: amazon/chronos-t5-base
+  model_type: seq2seq
+
+  # Data configuration
+  data_dir: ${oc.env:WORK}/data
+  system: Lorenz
+
+  # Experiment parameters
+  subsample_interval: 4
+  context_length: 512
+  prediction_length: 512
+  num_samples: 20
+
+  # Ablation parameters
+  methods: [zero, mean, zero-r, mean-r]  # Options: zero, mean
+  n_layers: 12
+  n_heads: 12
+
+  # Output configuration
+  output_dir: ${oc.env:WORK}/results/ablation_mosaic
+
+
+mlp_window_ablation:
+  model_names: [amazon/chronos-t5-mini, amazon/chronos-t5-small, amazon/chronos-t5-base, amazon/chronos-t5-large]
+
+  # Data configuration
+  k_values: [5, 10, 20]
+  amp_values: [1, 2, 1.5]
+  steps: 200
+  t_1: 1
+
+  # Output configuration
+  output_dir: ${oc.env:WORK}/results/mlp_window_ablation
+
+  # Device configuration
+  device: cuda

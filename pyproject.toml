@@ -1,0 +1,81 @@
+[build-system]
+requires = ["uv_build>=0.8.3,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "tsfm_lens"
+module-root = ""
+
+[tool.uv]
+package = true
+python-preference = "managed"
+
+[project]
+name = "tsfm_lens"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+authors = [
+    { name = "Anthony Bao", email = "abao@utexas.edu" },
+    { name = "Hasith Vattikuti", email = "hasith@utexas.edu" },
+]
+requires-python = ">=3.10"
+dependencies = [
+    "hydra-core>=1.3.2",
+    "matplotlib>=3.10.3",
+    "torch>=2.6.0",
+    "transformers>=4.52.4",
+    "wandb",
+    "gluonts[arrow]",
+    "dysts",
+    "orjson",
+    "einops",
+    "datasets",
+    "pandas==2.0.0", # for gift-eval
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.13.0",
+    "ipykernel",
+]
+
+# Optional dependencies
+[project.optional-dependencies]
+plotly = ["plotly"]
+tsfms = [
+    "chronos-forecasting",
+    "timesfm",
+]
+# NOTE: toto-ts may conflict with some dependencies
+toto = ["toto-ts"]
+
+# --------------------------------------------------------------------------
+# for installing torch with CUDA
+# change package index to your version if it is different from 12.4
+# see https://docs.astral.sh/uv/guides/integration/pytorch/ for more info
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint.extend-per-file-ignores]
+"__init__.py" = ["E402", "F401", "F403", "E501"]
+
+[tool.ruff.lint]
+extend-select = ["UP"]
+ignore = [
+    "F722"
+]
+

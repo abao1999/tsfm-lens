@@ -1,0 +1,153 @@
+eval:
+  rseed: 1234
+  results_save_dir: null
+
+  device: cuda:0
+  torch_dtype: bfloat16
+
+  batch_size: 128
+
+  prediction_length: 512
+
+  metric_names:
+    - smape
+    - wape
+    - mase
+    - wql
+    - spearman
+    - pearson
+    - ssim
+    - energy_distance
+    - spectral_hellinger
+    - spectral_wasserstein-1
+    - spectral_wasserstein-2
+    - cross_spectral_phase_similarity
+
+  split_coords: false
+
+  forecast_save_dir: null
+  labels_save_dir: null
+
+  metrics_save_dir: null
+  metrics_fname: metrics
+  overwrite: true
+
+  parallel_sample_reduction: mean
+
+  # window style can be either sampled, rolling, single, or fixed_start
+  # sampled: randomly samples windows from each timeseries (of length context_length) 
+  # rolling: takes consecutive windows of context_length with a stride of
+  #   window_stride from each timeseries
+  #   (in this case, num_test_instances need not be specified - always number of sliding windows
+  #   conditioned on window stride, namely (T - context_length - prediction_length) // window_stride + 1)
+  # single: takes single window of length context_length from the beginning of each timeseries
+  # (in this case, num_test_instances need not be specified - always 1)
+  # fixed_start: takes single window starting at a specific time index (window_start_time)
+  num_test_instances: 1 # number of context windows to use for evaluation
+  window_style: sampled
+
+  window_stride: 1
+  window_start_time: null # specific time index to start window (only used when window_style is fixed_start)
+  verbose: false
+
+
+  dataset_name: null
+  data_dir: null
+
+  # dysts specific configuration
+  dysts:
+    num_subdirs: null
+    system_names:
+      - Lorenz
+    num_samples_per_subdir: null
+    subsample_interval: 1 # default to no subsampling
+
+  # Gift-Eval specific configuration
+  gift_eval:
+    dataset_names: null  # List of specific dataset names to load, or null for all
+    max_num_datasets: null # Maximum number of datasets to load (if we only want to load a subset of the datasets)
+    term: short  # Prediction term: "short", "medium", or "long"
+    to_univariate: false  # Whether to convert multivariate datasets to univariate
+    short_term: 
+    short_datasets:
+      - m4_yearly
+      - m4_quarterly 
+      - m4_monthly
+      - m4_weekly
+      - m4_daily
+      - m4_hourly
+      - electricity/15T
+      - electricity/H
+      - electricity/D
+      - electricity/W
+      - solar/10T
+      - solar/H
+      - solar/D
+      - solar/W
+      - hospital
+      - covid_deaths
+      - us_births/D
+      - us_births/M
+      - us_births/W
+      - saugeenday/D
+      - saugeenday/M
+      - saugeenday/W
+      - temperature_rain_with_missing
+      - kdd_cup_2018_with_missing/H
+      - kdd_cup_2018_with_missing/D
+      - car_parts_with_missing
+      - restaurant
+      - hierarchical_sales/D
+      - hierarchical_sales/W
+      - LOOP_SEATTLE/5T
+      - LOOP_SEATTLE/H
+      - LOOP_SEATTLE/D
+      - SZ_TAXI/15T
+      - SZ_TAXI/H
+      - M_DENSE/H
+      - M_DENSE/D
+      - ett1/15T
+      - ett1/H
+      - ett1/D
+      - ett1/W
+      - ett2/15T
+      - ett2/H
+      - ett2/D
+      - ett2/W
+      - jena_weather/10T
+      - jena_weather/H
+      - jena_weather/D
+      - bitbrains_fast_storage/5T
+      - bitbrains_fast_storage/H
+      - bitbrains_rnd/5T
+      - bitbrains_rnd/H
+      - bizitobs_application
+      - bizitobs_service
+      - bizitobs_l2c/5T
+      - bizitobs_l2c/H
+
+    medium_long_datasets:
+      - electricity/15T
+      - electricity/H
+      - solar/10T
+      - solar/H
+      - kdd_cup_2018_with_missing/H
+      - LOOP_SEATTLE/5T
+      - LOOP_SEATTLE/H
+      - SZ_TAXI/15T
+      - M_DENSE/H
+      - ett1/15T
+      - ett1/H
+      - ett2/15T
+      - ett2/H
+      - jena_weather/10T
+      - jena_weather/H
+      - bitbrains_fast_storage/5T
+      - bitbrains_rnd/5T
+      - bizitobs_application
+      - bizitobs_service
+      - bizitobs_l2c/5T
+      - bizitobs_l2c/H
+
+
+      
