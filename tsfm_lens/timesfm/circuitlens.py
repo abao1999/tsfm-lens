@@ -10,11 +10,11 @@ from torch.utils.hooks import RemovableHandle
 
 from tsfm_lens.circuitlens import BaseCircuitLens
 
-from .pipeline import TimesFMPipelinetsfm_lens
+from .pipeline import TimesFMPipelineCustom
 
 
 @dataclass
-class CircuitLensTimesFM(TimesFMPipelinetsfm_lens, BaseCircuitLens):
+class CircuitLensTimesFM(TimesFMPipelineCustom, BaseCircuitLens):
     """
     Hook-based inspection utilities for TimesFM modules.
 
@@ -58,7 +58,7 @@ class CircuitLensTimesFM(TimesFMPipelinetsfm_lens, BaseCircuitLens):
     custom_outputs: dict[str, torch.Tensor] = field(default_factory=dict)
 
     def __post_init__(self):
-        TimesFMPipelinetsfm_lens.__post_init__(self)
+        TimesFMPipelineCustom.__post_init__(self)
 
         # Initialize attributes required by BaseCircuitLens
         # NOTE: this is weird because timesfm TimesFM_2p5_200M_torch is itself a wrapper around the model

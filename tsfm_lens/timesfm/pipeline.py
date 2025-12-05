@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import torch
-
 import timesfm
+import torch
 from timesfm import TimesFM_2p5_200M_torch
 
 
 @dataclass
-class TimesFMPipelinetsfm_lens:
+class TimesFMPipelineCustom:
     """
     Lightweight pipeline wrapper around a TimesFM 2.5 torch module.
 

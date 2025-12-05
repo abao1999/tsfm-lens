@@ -17,7 +17,6 @@ from chronos import (
     ChronosPipeline,
     MeanScaleUniformBins,
 )
-from tqdm import tqdm
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -25,18 +24,14 @@ from transformers import (
 )
 from transformers.generation.configuration_utils import GenerationConfig
 
-from tsfm_lens.assimilation import (
-    uncertainty_triggered_intervention,
-)
-
 EPS = 1e-12
 logger = logging.getLogger(__file__)
 
 
 @dataclass
-class ChronosPipelinetsfm_lens(ChronosPipeline):
+class ChronosPipelineCustom(ChronosPipeline):
     """
-    A ``ChronosPipelinetsfm_lens`` uses the given tokenizer and model to forecast
+    A ``ChronosPipelineCustom`` uses the given tokenizer and model to forecast
     input time series.
 
     Use the ``from_pretrained`` class method to load serialized models.
@@ -53,174 +48,6 @@ class ChronosPipelinetsfm_lens(ChronosPipeline):
     tokenizer: MeanScaleUniformBins
     model: ChronosModel
 
-    def predict_with_assimilation(
-        self,
-        context: torch.Tensor | list[torch.Tensor],
-        future_vals: torch.Tensor,
-        prediction_length: int | None = None,
-        num_samples: int | None = None,
-        temperature: float | None = None,
-        top_k: int | None = None,
-        top_p: float | None = None,
-        limit_prediction_length: bool = True,
-        deterministic: bool = False,
-        latency_delay: int = 0,  # number of timesteps to delay the intervention
-        verbose: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Forecast with uncertainty-based interventions + context‐growth rollouts.
-
-        Performs interventions (ground truth injection) at the n_edits timesteps with
-        highest uncertainty, or when uncertainty exceeds threshold if n_edits is None.
-
-        TODO: implement a latency: can't have faster than r rate of interventions
-        Returns:
-        - predictions: Tensor of shape (batch_size, num_samples, total_prediction_length)
-        - corrected_timesteps: BoolTensor of shape (total_prediction_length,)
-        """
-
-        # --- Setup & validation ---
-        context_tensor = self._prepare_and_validate_context(context)
-        batch_size = context_tensor.shape[0]
-        max_model_pred = int(self.model.config.prediction_length)
-
-        total_pred_len = prediction_length or max_model_pred
-        if total_pred_len > max_model_pred and limit_prediction_length:
-            raise ValueError(
-                f"Requested {total_pred_len}>model max {max_model_pred}. Set limit_prediction_length=False to override."
-            )
-
-        num_samples = num_samples or self.model.config.num_samples
-        temperature = 1.0 if deterministic else temperature
-        top_k = 1 if deterministic else top_k
-        top_p = 1.0 if deterministic else top_p
-
-        # Accumulate each rollout’s predictions into all_rollouts
-        all_rollouts: list[torch.Tensor] = []
-        corrected_timesteps = torch.zeros(total_pred_len, dtype=torch.bool, device=self.model.device)
-
-        n_rollouts = 0
-        remaining = total_pred_len
-
-        # Loop until we generate full horizon
-        while remaining > 0:
-            # 1) Determine this rollout’s length
-            curr_len = min(remaining, max_model_pred)
-
-            # 2) Prepare context encoding
-            encoder_ids, attention_mask, scale = self.tokenizer.context_input_transform(context_tensor)
-            device = self.model.device
-
-            # Tile encoder & mask → [B, N, ...] → flatten [B*N, ...]
-            encoder_ids = (
-                encoder_ids.to(device).unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, encoder_ids.size(-1))
-            )
-            attention_mask = (
-                attention_mask.to(device).unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, attention_mask.size(-1))
-            )
-
-            # 3) Slice the appropriate window of future_vals → [B, curr_len]
-            start = n_rollouts * max_model_pred
-            end = start + curr_len
-            future_slice = future_vals[:, start:end]  # [B, curr_len]
-
-            # Tile future → [B, N, curr_len] → flatten [B*N, curr_len]
-            future_ids, _, _ = self.tokenizer._input_transform(future_slice, scale=scale)
-            future_ids = future_ids.to(device).unsqueeze(1).expand(-1, num_samples, -1).reshape(-1, future_ids.size(-1))
-
-            # 4) Init decoder_ids = start_token → [B*N, 1]
-            pad_id = self.tokenizer.config.pad_token_id
-            decoder_ids = (
-                torch.full((batch_size, 1), pad_id, device=device)
-                .unsqueeze(1)
-                .expand(-1, num_samples, -1)
-                .reshape(-1, 1)
-            )
-
-            # 5) Single‐step loop for this rollout
-            last_intervention_time = 0  # track the last time an intervention was made
-            for t in tqdm(range(curr_len), desc="Generating rollout"):
-                out = self.model.model.generate(
-                    input_ids=encoder_ids,
-                    attention_mask=attention_mask,
-                    decoder_input_ids=decoder_ids,
-                    generation_config=GenerationConfig(
-                        min_new_tokens=1,
-                        max_new_tokens=1,
-                        do_sample=(not deterministic),
-                        num_return_sequences=1,
-                        eos_token_id=self.model.config.eos_token_id,
-                        pad_token_id=pad_id,
-                        temperature=temperature,
-                        top_k=top_k,
-                        top_p=top_p,
-                        return_dict_in_generate=True,
-                        use_cache=True,
-                    ),
-                )  # type: ignore
-                # [B*N, seq_len_so_far+1]
-                decoder_ids = out.sequences
-
-                # Uncertainty-based intervention
-                if num_samples > 1 and t - last_intervention_time >= latency_delay:
-                    # Get model logits for the last generated token. Calls forward pass for computing model internal representations
-                    with torch.no_grad():
-                        outputs = self.model.model(
-                            input_ids=encoder_ids,
-                            attention_mask=attention_mask,
-                            decoder_input_ids=decoder_ids,
-                            return_dict=True,
-                        )
-                        logits = outputs.logits[:, -1, :]  # [B*N, vocab_size]
-
-                        # Reshape logits to [B, N, V] for batched processing
-                        logits_batched = logits.view(batch_size, num_samples, -1)  # [B, N, V]
-
-                        do_intervene, _ = uncertainty_triggered_intervention(
-                            logits_batched,
-                            conf_thresh=0.3,
-                            dis_thresh=0.7,
-                            k=1,
-                            verbose=verbose,
-                        )
-
-                        # Apply intervention for batches that need it
-                        if do_intervene.any():
-                            last_intervention_time = t
-                            # Create mask for batches that need intervention
-                            intervention_mask = do_intervene.unsqueeze(1).expand(-1, num_samples)  # [B, N]
-                            intervention_mask = intervention_mask.flatten()  # [B*N]
-
-                            # Replace tokens for batches that need intervention
-                            decoder_ids[intervention_mask, -1] = future_ids[:, t][intervention_mask]
-                            corrected_timesteps[start + t] = True
-                            if verbose:
-                                print(f"t={t}, intervened with gt_tok={future_ids[:, t]}")
-
-            # 6) Un‑flatten → [B, N, seq_len]
-            seq_len = decoder_ids.size(-1)
-            decoder_ids = decoder_ids.view(batch_size, num_samples, seq_len)
-
-            # drop initial pad/start token → [B, N, curr_len]
-            rollout_preds = decoder_ids[..., 1:]
-
-            # 7) Inverse‐transform to real scale
-            rollout_preds = self.tokenizer.output_transform(rollout_preds.to(scale.device), scale)
-
-            all_rollouts.append(rollout_preds)
-            remaining -= curr_len
-            n_rollouts += 1
-
-            # 8) Grow the context if needed
-            if remaining > 0:
-                next_ctx = rollout_preds.median(dim=1).values
-                context_tensor = torch.cat([context_tensor, next_ctx], dim=-1)
-
-        # Concatenate all rollout segments along the time axis → [B, N, total_pred_len]
-        final_preds = torch.cat(all_rollouts, dim=-1)
-
-        return final_preds, corrected_timesteps
-
     def predict_with_edits(
         self,
         context: torch.Tensor | list[torch.Tensor],
@@ -236,7 +63,7 @@ class ChronosPipelinetsfm_lens(ChronosPipeline):
         corrections_rseed: int = 99,
         return_dict_in_generate: bool = True,
         verbose: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, list[torch.Tensor]]:
         """
         Forecast with scheduled‐sampling–style injection + context‐growth rollouts.
 
@@ -533,7 +360,7 @@ class ChronosPipelinetsfm_lens(ChronosPipeline):
         chronos_config = ChronosConfig(**config.chronos_config)
 
         if chronos_config.tokenizer_class != "MeanScaleUniformBins":
-            raise ValueError("ChronosPipelinetsfm_lens currently only supports MeanScaleUniformBins tokenizer")
+            raise ValueError("ChronosPipelineCustom currently only supports MeanScaleUniformBins tokenizer")
 
         if chronos_config.model_type == "seq2seq":
             inner_model = AutoModelForSeq2SeqLM.from_pretrained(*args, **kwargs)

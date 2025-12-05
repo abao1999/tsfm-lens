@@ -22,7 +22,7 @@ from toto.model.toto import Toto
 
 
 @dataclass
-class TotoForecastertsfm_lens(TotoForecaster):
+class TotoForecasterCustom(TotoForecaster):
     """
     A forecaster class for the Toto model that handles autoregressive decoding for time series forecasting.
 

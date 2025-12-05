@@ -9,11 +9,11 @@ import torch
 from torch.utils.hooks import RemovableHandle
 
 from tsfm_lens.circuitlens import BaseCircuitLens
-from tsfm_lens.toto.pipeline import TotoForecastertsfm_lens
+from tsfm_lens.toto.pipeline import TotoForecasterCustom
 
 
 @dataclass
-class CircuitLensToto(TotoForecastertsfm_lens, BaseCircuitLens):
+class CircuitLensToto(TotoForecasterCustom, BaseCircuitLens):
     """
     Hook-based inspection utilities for Toto modules.
 

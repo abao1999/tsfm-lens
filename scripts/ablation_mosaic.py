@@ -5,11 +5,11 @@ import pickle
 import hydra
 import numpy as np
 import torch
-from tsfm_lens.ablation import ablate_attention_head
 from omegaconf import DictConfig
 from tqdm import tqdm
+from tsfm_lens.ablation import ablate_attention_head
 
-from tsfm_lens.chronos.pipeline import ChronosPipelinetsfm_lens
+from tsfm_lens.chronos.pipeline import ChronosPipelineCustom
 from tsfm_lens.utils import make_ensemble_from_arrow_dir
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def average_scores(outputs):
 
 
 def compute_wasserstein_mosaic(
-    pipeline: ChronosPipelinetsfm_lens,
+    pipeline: ChronosPipelineCustom,
     context: torch.Tensor,
     prediction_length: int,
     num_samples: int = 20,
@@ -80,7 +80,7 @@ def compute_wasserstein_mosaic(
     Compute the Wasserstein distance between the baseline and ablated model outputs.
 
     Args:
-        pipeline: ChronosPipelinetsfm_lens, the model to ablate
+        pipeline: ChronosPipelineCustom, the model to ablate
         context: torch.Tensor, the context to predict from
         prediction_length: int, the length of the prediction to make
         num_samples: int, the number of samples to use for the prediction
@@ -180,7 +180,7 @@ def main(cfg: DictConfig):
     context = dyst_coords[:, :context_length]
 
     for ablation_method in ablation_methods:
-        pipeline = ChronosPipelinetsfm_lens.from_pretrained(
+        pipeline = ChronosPipelineCustom.from_pretrained(
             model_name,
             device_map=device,
             torch_dtype=torch.bfloat16,

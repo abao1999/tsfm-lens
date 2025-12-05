@@ -28,9 +28,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import torch
-
 import timesfm
+import torch
 
 
 def _pad_context_1d(
@@ -76,7 +75,7 @@ def _to_patches(inputs_1d: torch.Tensor, masks_1d: torch.Tensor, patch_len: int)
 
 
 @dataclass
-class TimesFMPipelinetsfm_lens:
+class TimesFMPipelineCustom:
     """
     Lightweight pipeline wrapper around a TimesFM 2.5 torch module.
 

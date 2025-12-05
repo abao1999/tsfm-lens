@@ -6,12 +6,12 @@ import numpy as np
 import torch
 from torch.utils.hooks import RemovableHandle
 
-from tsfm_lens.chronos.pipeline import ChronosPipelinetsfm_lens
+from tsfm_lens.chronos.pipeline import ChronosPipelineCustom
 from tsfm_lens.circuitlens import BaseCircuitLens
 
 
 @dataclass
-class CircuitLensChronos(ChronosPipelinetsfm_lens, BaseCircuitLens):
+class CircuitLensChronos(ChronosPipelineCustom, BaseCircuitLens):
     """
     A class for performing circuit lens analysis on Chronos (wrapper of T5ForConditionalGeneration).
 

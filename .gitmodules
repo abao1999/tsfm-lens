@@ -1,4 +1,4 @@
 [submodule "external/timesfm"]
 	path = external/timesfm
 	url = git@github.com:hasithv/timesfm.git
-	branch = main
+	branch = master

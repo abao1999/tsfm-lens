@@ -25,7 +25,7 @@ from toto.inference.gluonts_predictor import Multivariate, TotoPredictor
 from tqdm.auto import tqdm
 
 from tsfm_lens.dataset import GiftEvalDataset
-from tsfm_lens.toto.pipeline import TotoForecastertsfm_lens
+from tsfm_lens.toto.pipeline import TotoForecasterCustom
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 DEFAULT_CONTEXT_LENGTH = 4096
@@ -507,7 +507,7 @@ def evaluate_dataset_with_model(model, task: EvalTask, gifteval_dir: str) -> pd.
     return result_df
 
 
-def toto_evaluate_tasks(tasks: list[EvalTask], gifteval_dir: str, pipeline: TotoForecastertsfm_lens) -> pd.DataFrame:
+def toto_evaluate_tasks(tasks: list[EvalTask], gifteval_dir: str, pipeline: TotoForecasterCustom) -> pd.DataFrame:
     """
     Evaluate a batch of tasks sequentially, possibly from different checkpoints.
     This function will load models on-demand.

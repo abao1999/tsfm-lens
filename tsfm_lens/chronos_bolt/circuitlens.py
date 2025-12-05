@@ -6,12 +6,12 @@ import numpy as np
 import torch
 from torch.utils.hooks import RemovableHandle
 
-from tsfm_lens.chronos_bolt.pipeline import ChronosBoltPipelinetsfm_lens
+from tsfm_lens.chronos_bolt.pipeline import ChronosBoltPipelineCustom
 from tsfm_lens.circuitlens import BaseCircuitLens
 
 
 @dataclass
-class CircuitLensBolt(ChronosBoltPipelinetsfm_lens, BaseCircuitLens):
+class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
     """
     A class for performing circuit lens analysis on ChronosBolt models.
 

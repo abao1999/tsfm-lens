@@ -20,7 +20,7 @@ from transformers import (
     AutoConfig,
 )
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
-from transformers.models.t5.modeling_t5 import T5Config
+from transformers.models.t5.configuration_t5 import T5Config
 
 EPS = 1e-12
 logger = logging.getLogger(__file__)
@@ -45,7 +45,7 @@ class ChronosBoltForecastModelFullOutputs(ChronosBoltModelForForecasting):
         output_hidden_states: bool = False,
         use_cache: bool = True,
         return_dict_in_generate: bool = False,
-    ) -> tuple[ChronosBoltOutput, BaseModelOutputWithPastAndCrossAttentions | None]:
+    ) -> tuple[ChronosBoltOutput, BaseModelOutputWithPastAndCrossAttentions] | ChronosBoltOutput:
         """
         TODO: return the full outputs of the decoder.
         """
@@ -115,7 +115,7 @@ class ChronosBoltForecastModelFullOutputs(ChronosBoltModelForForecasting):
             return ChronosBoltOutput(
                 loss=loss,
                 quantile_preds=quantile_preds,
-            ), full_decoder_output
+            ), full_decoder_output  # type: ignore
         else:
             return ChronosBoltOutput(loss=loss, quantile_preds=quantile_preds)
 
@@ -157,9 +157,9 @@ class ChronosBoltForecastModelFullOutputs(ChronosBoltModelForForecasting):
             The full output object from the decoder, including last_hidden_state and optionally attentions and hidden states.
         """
         batch_size = input_embeds.shape[0]
-        decoder_input_ids = torch.full(
+        decoder_input_ids = torch.full(  # type: ignore
             (batch_size, 1),
-            self.config.decoder_start_token_id,
+            self.config.decoder_start_token_id,  # type: ignore
             device=input_embeds.device,
         )
         # NOTE: self.decoder is a T5Stack https://github.com/huggingface/transformers/blob/a871f6f58d49f3a05ae9dae519caa8aa9d919a07/src/transformers/models/t5/modeling_t5.py#L952
@@ -189,9 +189,9 @@ class ChronosBoltForecastModelFullOutputs(ChronosBoltModelForForecasting):
 
 
 @dataclass
-class ChronosBoltPipelinetsfm_lens(ChronosBoltPipeline):
+class ChronosBoltPipelineCustom(ChronosBoltPipeline):
     """
-    A ``ChronosBoltPipelinetsfm_lens`` uses the given model to forecast
+    A ``ChronosBoltPipelineCustom`` uses the given model to forecast
     input time series.
 
     Use the ``from_pretrained`` class method to load serialized models.
@@ -210,7 +210,7 @@ class ChronosBoltPipelinetsfm_lens(ChronosBoltPipeline):
     def predict_with_full_outputs(  # type: ignore[override]
         self,
         context: torch.Tensor | list[torch.Tensor],
-        prediction_length: int | None = None,
+        prediction_length: int,
         limit_prediction_length: bool = False,
         output_attentions: bool = True,
         output_hidden_states: bool = True,
@@ -248,8 +248,6 @@ class ChronosBoltPipelinetsfm_lens(ChronosBoltPipeline):
 
         model_context_length = self.model.config.chronos_config["context_length"]
         model_prediction_length = self.model.config.chronos_config["prediction_length"]
-        if prediction_length is None:
-            prediction_length = model_prediction_length
 
         if prediction_length > model_prediction_length:
             msg = (
@@ -302,13 +300,7 @@ class ChronosBoltPipelinetsfm_lens(ChronosBoltPipeline):
 
         return torch.cat(predictions, dim=-1)[..., :prediction_length].to(
             dtype=torch.float32, device="cpu"
-        ), full_inference_outputs if return_dict_in_generate else None
-
-    def predict_with_assimilation(self, *args, **kwargs):
-        raise NotImplementedError("Not implemented")
-
-    def predict_with_edits(self, *args, **kwargs):
-        raise NotImplementedError("Not implemented")
+        ), full_inference_outputs if return_dict_in_generate else None  # type: ignore
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
@@ -321,7 +313,7 @@ class ChronosBoltPipelinetsfm_lens(ChronosBoltPipeline):
         config = AutoConfig.from_pretrained(*args, **kwargs)
         assert hasattr(config, "chronos_config"), "Not a Chronos config file"
 
-        architecture = config.architectures[0]
+        architecture = config.architectures[0]  # type: ignore
         logger.info(f"Original model architecture: {architecture}")
         class_ = globals().get(architecture)
         logger.info(f"Class: {class_}")
