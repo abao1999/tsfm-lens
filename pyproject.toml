@@ -49,6 +49,7 @@ tsfms = [
 ]
 # NOTE: toto-ts may conflict with some dependencies
 toto = ["toto-ts"]
+plotting = ["seaborn"]
 
 # --------------------------------------------------------------------------
 # for installing torch with CUDA

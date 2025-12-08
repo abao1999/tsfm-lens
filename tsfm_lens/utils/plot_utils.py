@@ -566,103 +566,93 @@ def plot_ablation_metrics_distributional(
     cmap_range: tuple[float, float] = (0.1, 0.9),
     percentile_range: tuple[float, float] = (25, 75),
     whisker_range: tuple[float, float] = (10, 90),
-    show_legend: bool = False,
     tick_rotation: int = 45,
     verbose: bool = False,
+    hide_indices: list[int] | None = None,
+    exclude_outliers_iqr: float | None = None,
+    show_median_trend: bool = False,
 ) -> None:
-    """Plot violin or box plots of ablation metrics across different layer ablations."""
-    _, metric_name_title = _get_metric_transform(metric_name)
+    """Plot violin or box plots of ablation metrics across different layer ablations.
 
-    # Filter and sort data
+    Args:
+        whisker_range: Percentile range for caps/whiskers (default (10, 90)).
+            For violin plots: data outside this range is excluded (outliers clipped).
+            For box plots: determines whisker extent.
+        hide_indices: List of x-axis indices (0-based) to exclude from the plot entirely.
+        exclude_outliers_iqr: If set, exclude outliers using IQR method before applying whisker_range.
+            Values outside [Q1 - multiplier*IQR, Q3 + multiplier*IQR] are removed.
+            Common values: 1.5 (standard), 3.0 (extreme outliers only).
+        show_median_trend: If True, draw a red line connecting the medians across groups.
+    """
+    _, metric_name_title = _get_metric_transform(metric_name)
     layer_group_metrics, x_labels = get_layergroup_metrics(data, metric_name, prediction_horizon)
 
-    # Create plot
+    # Filter hidden indices
+    if hide_indices:
+        keep = [i for i in range(len(layer_group_metrics)) if i not in set(hide_indices)]
+        layer_group_metrics = [layer_group_metrics[i] for i in keep]
+        x_labels = [x_labels[i] for i in keep]
+
+    # Exclude IQR outliers
+    if exclude_outliers_iqr is not None:
+        layer_group_metrics = [
+            arr[
+                (arr >= (q1 := np.percentile(arr, 25)) - exclude_outliers_iqr * (iqr := np.percentile(arr, 75) - q1))
+                & (arr <= q1 + iqr + exclude_outliers_iqr * iqr)
+            ]
+            for arr in layer_group_metrics
+        ]
+
     fig, ax = plt.subplots(figsize=figsize)
+    positions = np.arange(len(x_labels))
     colors = _get_colors(cmap, len(layer_group_metrics), cmap_range)
 
-    def style_plot_elements(elements, fill_colors):
-        for element, color in zip(elements, fill_colors):
-            element.set_facecolor(color)
-            element.set_alpha(0.7)
-            element.set_edgecolor("black")
-            element.set_linewidth(0.5)
+    def style_bodies(elements, fill_colors):
+        for elem, color in zip(elements, fill_colors):
+            elem.set_facecolor(color)
+            elem.set_alpha(0.7)
+            elem.set_edgecolor("black")
+            elem.set_linewidth(0.5)
 
-    def add_legend(ax, mean_line=None, median_line=None, show_mean_line=True):
-        legend_handles, legend_labels = [], []
-        if mean_line and show_mean_line:
-            legend_handles.append(mean_line)
-            legend_labels.append("Mean")
-        if median_line:
-            legend_handles.append(median_line)
-            legend_labels.append("Median")
-        if legend_handles:
-            ax.legend(legend_handles, legend_labels, loc="upper right", frameon=True, framealpha=0.9)
+    def style_lines(collection, color="black", linewidth=1):
+        """Style a LineCollection or list of lines."""
+        if collection is None:
+            return
+        try:
+            for line in collection:
+                line.set_color(color)
+                line.set_linewidth(linewidth)
+        except TypeError:
+            collection.set_color(color)
+            collection.set_linewidth(linewidth)
+
+    # Data used for plotting (and for median trend calculation)
+    plot_data = layer_group_metrics
 
     if plot_type == "violin":
-        # For violin plots, we'll use the standard parameters
-        # Note: violinplot doesn't have direct whisker range control like boxplot
-        # The whisker_range parameter is ignored for violin plots
-        # If you need whisker range control, consider using box plots instead
-        parts = ax.violinplot(
-            layer_group_metrics,
-            positions=np.arange(len(x_labels)),
-            showmeans=True,
-            showmedians=True,
-            widths=0.8,
-            vert=True,
-        )
-        style_plot_elements(parts["bodies"], colors)
-        mean_line, median_line = parts.get("cmeans"), parts.get("cmedians")
+        # Clip to whisker_range for violin plots
+        plot_data = [
+            arr[(arr >= np.percentile(arr, whisker_range[0])) & (arr <= np.percentile(arr, whisker_range[1]))]
+            for arr in layer_group_metrics
+        ]
 
-        # Style the center bars (vertical lines through violins)
-        if "cbars" in parts:
-            cbars = parts["cbars"]
-            try:
-                # Try to iterate (for list of lines)
-                for bar in cbars:  # type: ignore
-                    bar.set_color("black")
-                    bar.set_linewidth(1)
-            except TypeError:
-                # If it's a LineCollection, style it directly
-                cbars.set_color("black")
-                cbars.set_linewidth(1)
+        parts = ax.violinplot(plot_data, positions=positions, showmeans=True, showmedians=True, widths=0.8)
+        style_bodies(parts["bodies"], colors)
 
-        # Style the min/max lines at the ends of bars
-        if "cmins" in parts:
-            cmins = parts["cmins"]
-            try:
-                for min_line in cmins:  # type: ignore
-                    min_line.set_color("black")
-                    min_line.set_linewidth(1)
-            except TypeError:
-                cmins.set_color("black")
-                cmins.set_linewidth(1)
+        # Style all line elements
+        for key in ["cbars", "cmins", "cmaxes"]:
+            style_lines(parts.get(key))
 
-        if "cmaxes" in parts:
-            cmaxes = parts["cmaxes"]
-            try:
-                for max_line in cmaxes:  # type: ignore
-                    max_line.set_color("black")
-                    max_line.set_linewidth(1)
-            except TypeError:
-                cmaxes.set_color("black")
-                cmaxes.set_linewidth(1)
-
-        if mean_line:
+        if parts.get("cmeans"):
             if show_mean_line:
-                mean_line.set_color("black")
-                mean_line.set_linewidth(1)
-                mean_line.set_linestyle("--")
-                mean_line.set_alpha(0.8)
+                style_lines(parts["cmeans"], linewidth=1)
+                parts["cmeans"].set_linestyle("--")
+                parts["cmeans"].set_alpha(0.8)
             else:
-                mean_line.set_linewidth(0.0)
-                mean_line.set_zorder(-100)
-                mean_line.set_alpha(0.0)
-        if median_line:
-            median_line.set_color("black")
-            median_line.set_linewidth(2)
-        if show_legend:
-            add_legend(ax, mean_line, median_line, show_mean_line)
+                parts["cmeans"].set_alpha(0.0)
+
+        if parts.get("cmedians"):
+            style_lines(parts["cmedians"], linewidth=2)
 
     elif plot_type == "box":
         if percentile_range != (25, 75):
@@ -670,55 +660,46 @@ def plot_ablation_metrics_distributional(
                 ax, layer_group_metrics, x_labels, colors, percentile_range, whisker_range, show_mean_line
             )
         else:
-            # Use standard box plot with default percentiles
-            box_plot_kwargs_with_whis = {**(box_plot_kwargs or {}), "whis": whisker_range, "showfliers": False}
             box = ax.boxplot(
                 layer_group_metrics,
-                positions=np.arange(len(x_labels)),
+                positions=positions,
                 widths=0.6,
                 patch_artist=True,
                 showmeans=True,
                 meanline=True,
                 medianprops=dict(color="black", linewidth=2),
                 meanprops=dict(color="black", linewidth=1, linestyle="--") if show_mean_line else {},
-                **box_plot_kwargs_with_whis,
+                **{**(box_plot_kwargs or {}), "whis": whisker_range, "showfliers": False},
             )
-            style_plot_elements(box["boxes"], colors)
+            style_bodies(box["boxes"], colors)
 
-        # Handle mean and median styling for both custom and standard box plots
-        if "means" in box:
-            for mean in box["means"]:
-                if not show_mean_line:
-                    mean.set_alpha(0.0)
-        if "medians" in box:
-            for median in box["medians"]:
-                median.set_color("black")
-                median.set_linewidth(2)
-        if show_legend:
-            add_legend(
-                ax,
-                box.get("means", [None])[0] if show_mean_line else None,
-                box.get("medians", [None])[0],
-                show_mean_line,
-            )
+        for mean in box.get("means", []):
+            if not show_mean_line:
+                mean.set_alpha(0.0)
+        for median in box.get("medians", []):
+            median.set_color("black")
+            median.set_linewidth(2)
     else:
         raise ValueError(f"Unknown plot_type '{plot_type}'. Use 'violin' or 'box'.")
 
+    # Draw median trend line (uses the same data that's displayed in the plot)
+    if show_median_trend:
+        medians = [np.median(arr) for arr in plot_data]
+        ax.plot(positions, medians, color="red", linewidth=2, zorder=10, marker="o", markersize=4, alpha=0.5)
+
     _setup_plot_formatting(
         ax,
-        "Ablated Layers Group",
+        "Ablated Layers",
         metric_name_title,
         title or f"{metric_name_title} Distribution vs Ablated Layers (Horizon: {prediction_horizon})",
         x_labels=x_labels,
         rotation=tick_rotation,
     )
     _save_plot(save_path)
-    # if verbose, print the median and mean of each layer group
+
     if verbose:
-        for i, (label, arr) in enumerate(zip(x_labels, layer_group_metrics)):
-            median = np.median(arr)
-            mean = np.mean(arr)
-            print(f"{label}: Median = {median}, Mean = {mean}")
+        for label, arr in zip(x_labels, plot_data):
+            print(f"{label}: Median = {np.median(arr):.4f}, Mean = {np.mean(arr):.4f}")
 
 
 def plot_ablation_metrics_lines_over_horizon(
