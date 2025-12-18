@@ -115,7 +115,7 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         self.read_stream_inputs.clear()
         # NOTE: there are no custom attribution inputs yet
         if hasattr(self, "custom_attribution_inputs"):
-            self.custom_attribution_inputs.clear()
+            self.custom_attribution_inputs.clear()  # type: ignore[attr-defined]
         self.sa_head_attribution_outputs.clear()
         self.sa_attribution_outputs.clear()
         self.ca_head_attribution_outputs.clear()
@@ -186,7 +186,7 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
             for attention_type in ["ca", "sa"]:
                 self.add_head_ablation_hooks(
                     heads_to_ablate,
-                    attention_type=attention_type,
+                    attention_type=attention_type,  # type: ignore[arg-type]
                     ablation_method="zero",
                 )
         if "mlp" in ablations_types:
@@ -343,7 +343,7 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
                     layer_idx = total_decoder_layers + layer_idx
             else:
                 # This is a specific stack (encoder or decoder)
-                total_layers = len(module.block)
+                total_layers = len(module.block)  # type: ignore[attr-defined]
                 layer_idx = total_layers + layer_idx
 
         if layer_idx not in self.read_stream_inputs:
@@ -394,15 +394,15 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         if stack_type == "encoder":
             t5_model = self.model.encoder
             if attention_type == "sa":
-                return t5_model.block[layer_idx].layer[0].SelfAttention
+                return t5_model.block[layer_idx].layer[0].SelfAttention  # type: ignore[attr-defined]
             else:
                 raise ValueError("Encoder only has self-attention, not cross-attention")
         else:  # decoder
             t5_model = self.model.decoder
             if attention_type == "sa":
-                return t5_model.block[layer_idx].layer[0].SelfAttention
+                return t5_model.block[layer_idx].layer[0].SelfAttention  # type: ignore[attr-defined]
             else:  # ca
-                return t5_model.block[layer_idx].layer[1].EncDecAttention
+                return t5_model.block[layer_idx].layer[1].EncDecAttention  # type: ignore[attr-defined]
 
     def _get_attention_output_layer(
         self,
@@ -428,15 +428,15 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         if stack_type == "encoder":
             t5_model = self.model.encoder
             if attention_type == "sa":
-                return t5_model.block[layer_idx].layer[0].SelfAttention.o
+                return t5_model.block[layer_idx].layer[0].SelfAttention.o  # type: ignore[attr-defined]
             else:
                 raise ValueError("Encoder only has self-attention, not cross-attention")
         else:  # decoder
             t5_model = self.model.decoder
             if attention_type == "sa":
-                return t5_model.block[layer_idx].layer[0].SelfAttention.o
+                return t5_model.block[layer_idx].layer[0].SelfAttention.o  # type: ignore[attr-defined]
             else:  # ca
-                return t5_model.block[layer_idx].layer[1].EncDecAttention.o
+                return t5_model.block[layer_idx].layer[1].EncDecAttention.o  # type: ignore[attr-defined]
 
     def _get_attention_module(
         self,
@@ -462,15 +462,15 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         if stack_type == "encoder":
             t5_model = self.model.encoder
             if attention_type == "sa":
-                return t5_model.block[layer_idx].layer[0]
+                return t5_model.block[layer_idx].layer[0]  # type: ignore[attr-defined]
             else:
                 raise ValueError("Encoder only has self-attention, not cross-attention")
         else:  # decoder
             t5_model = self.model.decoder
             if attention_type == "sa":
-                return t5_model.block[layer_idx].layer[0]
+                return t5_model.block[layer_idx].layer[0]  # type: ignore[attr-defined]
             else:  # ca
-                return t5_model.block[layer_idx].layer[1]
+                return t5_model.block[layer_idx].layer[1]  # type: ignore[attr-defined]
 
     def add_head_ablation_hooks(
         self,
@@ -523,7 +523,7 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         if stack_type == "encoder":
             t5_model = self.model.encoder
             for layer_idx in mlp_to_ablate:
-                target_layer = t5_model.block[layer_idx].layer[1].DenseReluDense
+                target_layer = t5_model.block[layer_idx].layer[1].DenseReluDense  # type: ignore[attr-defined]
                 hook_fn = partial(self._ablate_mlp_hook_fn, ablation_method=ablation_method)
                 hook = target_layer.register_forward_hook(hook_fn)
                 self.mlp_ablation_handles[layer_idx] = hook
@@ -531,7 +531,7 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         else:  # decoder
             t5_model = self.model.decoder
             for layer_idx in mlp_to_ablate:
-                target_layer = t5_model.block[layer_idx].layer[2].DenseReluDense
+                target_layer = t5_model.block[layer_idx].layer[2].DenseReluDense  # type: ignore[attr-defined]
                 hook_fn = partial(self._ablate_mlp_hook_fn, ablation_method=ablation_method)
                 hook = target_layer.register_forward_hook(hook_fn)
                 self.mlp_ablation_handles[layer_idx] = hook
@@ -598,15 +598,15 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         if stack_type == "encoder":
             t5_model = self.model.encoder
             for layer_idx in mlp_to_attribute:
-                target_layer = t5_model.block[layer_idx].layer[1]
-                hook = target_layer.register_forward_hook(partial(self._attribute_mlp_hook_fn, layer_idx=layer_idx))
+                target_layer = t5_model.block[layer_idx].layer[1]  # type: ignore[attr-defined]
+                hook = target_layer.register_forward_hook(partial(self._attribute_mlp_hook_fn, layer_idx=layer_idx))  # type: ignore[attr-defined]
                 self.mlp_attribution_positions.append(layer_idx)
                 self.mlp_attribution_handles[layer_idx] = hook
         else:  # decoder
             t5_model = self.model.decoder
             for layer_idx in mlp_to_attribute:
-                target_layer = t5_model.block[layer_idx].layer[2]
-                hook = target_layer.register_forward_hook(partial(self._attribute_mlp_hook_fn, layer_idx=layer_idx))
+                target_layer = t5_model.block[layer_idx].layer[2]  # type: ignore[attr-defined]
+                hook = target_layer.register_forward_hook(partial(self._attribute_mlp_hook_fn, layer_idx=layer_idx))  # type: ignore[attr-defined]
                 self.mlp_attribution_positions.append(layer_idx)
                 self.mlp_attribution_handles[layer_idx] = hook
 
@@ -621,7 +621,7 @@ class CircuitLensBolt(ChronosBoltPipelineCustom, BaseCircuitLens):
         if stack_type == "encoder":
             t5_model = self.model.encoder
             for layer_idx in layer_idxs:
-                target_layer: torch.nn.Module = t5_model.block[layer_idx]
+                target_layer: torch.nn.Module = t5_model.block[layer_idx]  # type: ignore[attr-defined]
                 hook = target_layer.register_forward_hook(
                     partial(
                         self._read_stream_hook_fn,
