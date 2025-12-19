@@ -29,7 +29,7 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=3
+gpu_index=0
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
@@ -38,7 +38,7 @@ data_dir="${WORK}/data/gift-eval"
 rseeds=(42)
 ablated_components="[head]"
 
-head_selection_strategy="srank"
+head_selection_strategy="srank_reverse"
 
 model_type="toto"
 layers=("[1]" "[3]" "[4]" "[5]" "[6]" "[7]" "[8]" "[10]")
