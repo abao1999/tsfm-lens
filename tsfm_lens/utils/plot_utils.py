@@ -685,7 +685,7 @@ def plot_ablation_metrics_distributional(
     # Draw median trend line (uses the same data that's displayed in the plot)
     if show_median_trend:
         medians = [np.median(arr) for arr in plot_data]
-        ax.plot(positions, medians, color="red", linewidth=2, zorder=10, marker="o", markersize=4, alpha=0.5)
+        ax.plot(positions, medians, color="red", linewidth=3, zorder=10, marker="o", markersize=4, alpha=0.8)
 
     _setup_plot_formatting(
         ax,

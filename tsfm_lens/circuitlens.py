@@ -52,6 +52,14 @@ class BaseCircuitLens:
     ) -> Any:
         raise NotImplementedError("Subclasses must implement _ablate_mlp_hook_fn")
 
+    def add_ablation_hooks_explicit(
+        self,
+        ablations_types: list[Literal["head", "mlp"]],
+        layers_to_ablate_mlp: list[int],
+        heads_to_ablate: list[tuple[int, int]],
+    ) -> None:
+        raise NotImplementedError("Subclasses must implement add_ablation_hooks_explicit")
+
     def add_head_ablation_hooks(
         self,
         heads_to_ablate: list[tuple[int, int]],
@@ -148,7 +156,7 @@ class BaseCircuitLens:
         heads_to_attribute: list[tuple[int, int]],
         attention_type: Literal["sa", "ca"] = "ca",
         stack_type: Literal["encoder", "decoder"] | None = None,
-    ) -> dict[int, RemovableHandle]:
+    ) -> dict[int, RemovableHandle] | None:
         pass
 
     def add_attn_attribution_hooks(
@@ -156,21 +164,21 @@ class BaseCircuitLens:
         layer_idxs: list[int],
         attention_type: Literal["sa", "ca"] = "ca",
         stack_type: Literal["encoder", "decoder"] | None = None,
-    ) -> dict[int, RemovableHandle]:
+    ) -> dict[int, RemovableHandle] | None:
         pass
 
     def add_mlp_attribution_hooks(
         self,
         mlp_to_attribute: list[int],
         stack_type: Literal["encoder", "decoder"] | None = None,
-    ) -> dict[int, RemovableHandle]:
+    ) -> dict[int, RemovableHandle] | None:
         pass
 
     def add_logit_attribution_hooks(
         self,
         target_layer: torch.nn.Module,
         key: str,
-    ) -> dict[str, RemovableHandle]:
+    ) -> dict[str, RemovableHandle] | None:
         pass
 
     def remove_head_attribution_hooks(self, attention_type: Literal["sa", "ca"] = "ca") -> None:

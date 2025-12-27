@@ -25,6 +25,13 @@ git submodule update --init --recursive
 git submodule status
 ```
 
+Lastly, install the submodule in editable mode, with:
+```
+cd external/timesfm
+uv pip install -e .
+```
+
+
 To automatically strip notebook outputs on git push, make a file `.git/hooks/pre-commit` and write:
 ```
 #!/bin/bash
