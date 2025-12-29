@@ -29,7 +29,7 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=1
+gpu_index=3
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
@@ -38,14 +38,15 @@ data_dir="${WORK}/data/gift-eval"
 rseeds=(42)
 ablated_components="[head]"
 
-head_selection_strategy="srank"
+head_selection_strategy="srank_reverse"
 
-# model_type="toto"
-# layers=("[1]" "[2]" "[3]" "[4]" "[5]" "[6]" "[7]" "[8]" "[10]")
+model_type="toto"
+layers=("[0]" "[1]" "[4]" "[5]" "[6]" "[11]")
+# layers=("[2]" "[3]" "[7]" "[8]" "[9]" "[10]")
 
-model_type="chronos_bolt"
-# layers=("[0]" "[1]" "[2]" "[3]" "[4]" "[5]" "[6]" "[7]" "[8]" "[9]" "[10]" "[11]")
-layers=("[4]" "[5]" "[6]" "[7]" "[9]" "[10]" "[11]")
+# model_type="chronos_bolt"
+# # # layers=("[0]" "[1]" "[2]" "[3]" "[4]" "[5]" "[6]" "[7]" "[8]" "[9]" "[10]" "[11]")
+# # layers=("[4]" "[5]" "[6]" "[7]" "[9]" "[10]" "[11]")
 # layers=("[0]" "[1]" "[2]" "[3]" "[8]")
 
 num_heads=(11 9 7 5 3)
