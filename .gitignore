@@ -29,6 +29,7 @@ outputs*/
 
 notebooks/weight_visualization/*.json
 notebooks/weight_visualization/*.txt
+external/uni2ts/
 
 # output and development/debugging and logging files
 # tests/
