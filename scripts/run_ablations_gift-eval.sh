@@ -12,10 +12,7 @@
 #   rseeds                 - Array of random seeds for reproducibility
 #   ablated_components     - Components to ablate (e.g., "[head]")
 #   head_selection_strategy- Strategy for selecting heads (e.g., "srank", "srank_reverse")
-#   layers                 - Array of layer specs to ablate. Each element can be:
-#                            - Single layer: "[1]"
-#                            - Multiple layers together: "[1,2,3]"
-#   num_heads              - Array of head counts to ablate per layer
+#   target_ablations       - Associative array mapping layer index to num_heads to ablate
 #   term                   - GIFT-Eval term filter (short, medium, long, all)
 #   max_datasets           - Maximum number of datasets to evaluate (null for all)
 #
@@ -29,7 +26,7 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=3
+gpu_index=0
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
@@ -38,18 +35,32 @@ data_dir="${WORK}/data/gift-eval"
 rseeds=(42)
 ablated_components="[head]"
 
-head_selection_strategy="srank_reverse"
+head_selection_strategy="srank"
 
-model_type="toto"
-layers=("[0]" "[1]" "[4]" "[5]" "[6]" "[11]")
-# layers=("[2]" "[3]" "[7]" "[8]" "[9]" "[10]")
+model_type="timesfm"
 
-# model_type="chronos_bolt"
-# # # layers=("[0]" "[1]" "[2]" "[3]" "[4]" "[5]" "[6]" "[7]" "[8]" "[9]" "[10]" "[11]")
-# # layers=("[4]" "[5]" "[6]" "[7]" "[9]" "[10]" "[11]")
-# layers=("[0]" "[1]" "[2]" "[3]" "[8]")
+# Failed ablations: layer -> space-separated num_heads to re-run
+declare -A target_ablations=(
+    ["0"]="3 5 7 9 11 13 14 15"
+    ["1"]="3 5"
+    ["2"]="9 11 13 14"
+    ["3"]="14"
+    ["4"]="9 10 14"
+    ["6"]="9 14"
+    ["9"]="4 6 15"
+    ["10"]="7 9 11 14 15"
+    ["11"]="14"
+    ["12"]="7 9 11 13 14 15"
+    ["13"]="1 2 3 5 7 11 12 13 15"
+    ["14"]="14"
+    ["15"]="3 5 9 11 13 14 15"
+    ["16"]="7 11 14 15 null"
+    ["17"]="3 5 7 9 11"
+    ["18"]="11 15"
+    ["19"]="1 2 3 4 5 11 13 14"
+)
 
-num_heads=(11 9 7 5 3)
+echo "target_ablations: ${target_ablations[*]}"
 
 # =============================================================================
 # MODEL SETUP
@@ -110,18 +121,19 @@ echo "============================================"
 echo "  Model: ${model_name} (${model_type})"
 echo "  GPU: cuda:${gpu_index}"
 echo "  Term: ${term}"
-echo "  Layers: ${layers[*]}"
-echo "  Num heads: ${num_heads[*]}"
+echo "  Layers: ${!target_ablations[*]}"
 echo "  Seeds: ${rseeds[*]}"
 echo "  Components: ${ablated_components}"
 echo "  Head selection: ${head_selection_strategy}"
 echo "============================================"
 
-for layer_spec in "${layers[@]}"; do
+for layer in "${!target_ablations[@]}"; do
+    layer_spec="[${layer}]"
+    read -ra heads <<< "${target_ablations[$layer]}"
     for rseed in "${rseeds[@]}"; do
-        for n in "${num_heads[@]}"; do
+        for n in "${heads[@]}"; do
             echo ""
-            echo ">>> Running: layers=${layer_spec}, heads=${n}, seed=${rseed}"
+            echo ">>> Running: layer=${layer}, heads=${n}, seed=${rseed}"
             echo "--------------------------------------------"
 
             python scripts/run_ablations_gift-eval.py \
@@ -134,7 +146,7 @@ for layer_spec in "${layers[@]}"; do
                 ablation.head_selection_strategy="${head_selection_strategy}" \
             && wait
 
-            echo ">>> Completed: layers=${layer_spec}, heads=${n}, seed=${rseed}"
+            echo ">>> Completed: layer=${layer}, heads=${n}, seed=${rseed}"
         done
     done
 done
