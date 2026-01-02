@@ -137,26 +137,26 @@ class MoiraiPipelineCustom:
         actual_target_dim = context.size(-1)
         actual_batch_size = context.size(0)
 
-        self.model.hparams_context(
+        with self.model.hparams_context(
             prediction_length=actual_pred_len,
             target_dim=actual_target_dim,
             context_length=ctx_len,
             patch_size=actual_patch_size,
             num_samples=actual_num_samples,
-        )
-        data_entries = [
-            {
-                "target": context[i].squeeze().tolist(),
-                "start": pd.Period("2020-01-01", freq="1D"),
-            }
-            for i in range(context.size(0))
-        ]
-        dataset = ListDataset(data_entries, freq="1D")
-        predictor = self.model.create_predictor(batch_size=actual_batch_size)
-        forecasts = predictor.predict(dataset)
-        
-        forecast_it = iter(forecasts)
-        forecast = next(forecast_it)
+        ):
+            data_entries = [
+                {
+                    "target": context[i].squeeze().tolist(),
+                    "start": pd.Period("2020-01-01", freq="1D"),
+                }
+                for i in range(context.size(0))
+            ]
+            dataset = ListDataset(data_entries, freq="1D")
+            predictor = self.model.create_predictor(batch_size=actual_batch_size)
+            forecasts = predictor.predict(dataset)
+            
+            forecast_it = iter(forecasts)
+            forecast = next(forecast_it)
 
         # forecast.samples: (samples, horizon)
         return forecast.samples
