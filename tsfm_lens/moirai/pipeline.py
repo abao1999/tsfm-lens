@@ -107,6 +107,9 @@ class MoiraiPipelineCustom:
                 ``patch_size='auto'`` to score candidate patch sizes.
             future_observed_mask: Optional boolean mask aligned with
                 ``future_target``; defaults to all observed.
+        Returns:
+            Torch tensor shaped (batch, num_samples, prediction_length[, dim]) or
+            (batch, prediction_length[, dim]) when ``num_samples==1``.
         """
 
         self.model.eval()
@@ -137,6 +140,7 @@ class MoiraiPipelineCustom:
         actual_target_dim = context.size(-1)
         actual_batch_size = context.size(0)
 
+        forecasts = []
         with self.model.hparams_context(
             prediction_length=actual_pred_len,
             target_dim=actual_target_dim,
@@ -152,11 +156,18 @@ class MoiraiPipelineCustom:
                 for i in range(context.size(0))
             ]
             dataset = ListDataset(data_entries, freq="1D")
-            predictor = self.model.create_predictor(batch_size=actual_batch_size)
-            forecasts = predictor.predict(dataset)
-            
-            forecast_it = iter(forecasts)
-            forecast = next(forecast_it)
+            predictor = self.model.create_predictor(batch_size=actual_batch_size, device=device)
+            for forecast in predictor.predict(dataset, num_samples=actual_num_samples):
+                forecasts.append(torch.as_tensor(forecast.samples, device=device, dtype=context.dtype))
 
-        # forecast.samples: (samples, horizon)
-        return forecast.samples
+        if not forecasts:
+            raise RuntimeError("No forecasts were produced by the predictor.")
+
+        batch_samples = torch.stack(forecasts, dim=0)
+
+        # Keep a consistent return shape: (batch, num_samples, horizon[, dim]).
+        if actual_num_samples == 1:
+            batch_samples = batch_samples.squeeze(1)
+        if batch_samples.dim() >= 3 and batch_samples.size(-1) == 1:
+            batch_samples = batch_samples.squeeze(-1)
+        return batch_samples
