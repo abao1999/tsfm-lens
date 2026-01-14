@@ -1,12 +1,6 @@
-defaults:
-  - models
-  - evaluation
-  - plotting
-  - _self_
-
 entropic_rank:
   work_dir: ${oc.env:WORK}
-  save_subdir: entropic_rank
+  save_subdir: entropic_rank_v2
 
   data_dir: ${entropic_rank.work_dir}/data/base40
   system_names: null
@@ -25,7 +19,7 @@ entropic_rank:
   max_windows_per_series: null
   max_windows_total: null
 
-  num_samples: 10
+  num_samples: 20
   deterministic: false
 
   attention_types:
@@ -40,23 +34,10 @@ entropic_rank:
     toto:
       - attn
 
-  include_combined: true
-  plot_individual_curves: true
-  curve_alpha: 0.12
-  individual_linewidth: 1.0
-  median_linewidth: 2.8
-  figure_size: [9, 4.5]
-  dpi: 300
-  show_grid: true
-  file_format: png
   epsilon: 1e-8
-  overlay:
-    color_mode: darken  # options: darken, match, fixed
-    color_factor: 0.6
-    fixed_color: "#000000"
 
 models_to_run:
   - chronos
-  - chronos_bolt
-  - timesfm
-  - toto
+  # - chronos_bolt
+  # - timesfm
+  # - toto

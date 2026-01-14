@@ -2,9 +2,11 @@ defaults:
   - _self_
   - models
   - evaluation
-  - induction
   - ablation
   - plotting
+  - entropic_rank
+  - attention_entropy
+  - induction
   # - override hydra/job_logging: disabled 
   - override hydra/hydra_logging: disabled 
 

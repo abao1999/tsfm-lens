@@ -1,9 +1,3 @@
-defaults:
-  - models
-  - evaluation
-  - plotting
-  - _self_
-
 attention_entropy:
   work_dir: ${oc.env:WORK}
   output_root: ${attention_entropy.work_dir}/attention_scores
