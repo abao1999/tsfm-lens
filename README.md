@@ -45,3 +45,6 @@ fi
 
 Then, `chmod +x .git/hooks/pre-commit`
 
+TODOs:
+- TimesFM 2.5 doesn't work when not cuda:0 i.e. when gpu index is not 0. The predictions flatline.
+
