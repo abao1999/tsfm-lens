@@ -32,18 +32,12 @@ uv pip install -e .
 ```
 
 
-To automatically strip notebook outputs on git push, make a file `.git/hooks/pre-commit` and write:
+To automatically strip notebook outputs before commit, install pre-commit once:
 ```
-#!/bin/bash
-files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.ipynb$')
-if [[ -n "$files" ]]; then
-    echo "Cleaning notebook outputs before commit..."
-    echo "$files" | xargs -I {} jupyter nbconvert --to notebook --ClearOutputPreprocessor.enabled=True --inplace {}
-    git add $files
-fi
+uv tool install pre-commit
+pre-commit install
 ```
-
-Then, `chmod +x .git/hooks/pre-commit`
+This uses `.pre-commit-config.yaml` (nbstripout) to clear `*.ipynb` outputs on commit.
 
 TODOs:
 - TimesFM 2.5 doesn't work when not cuda:0 i.e. when gpu index is not 0. The predictions flatline.

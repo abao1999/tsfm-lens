@@ -1,28 +1,19 @@
 """
-Generate entropic rank plots for attention head outputs across multiple models.
-
-This script mirrors the exploratory analysis performed in the notebook
-`notebooks/dataset_tests.ipynb` and extends it to additional models.
-
-Usage
------
-    python scripts/entropic_rank_head_outputs.py
-
-Hydra configuration can be overridden from the CLI, for example:
-    python scripts/entropic_rank_head_outputs.py entropic_rank.num_samples=5
+This script computes the entropic rank for each head output and saves the results to a pickle file.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import pickle
 from collections import defaultdict
 from pathlib import Path
+
 import hydra
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from hydra.utils import get_original_cwd
-from matplotlib import colors as mcolors
 from omegaconf import DictConfig, OmegaConf
 from tqdm.auto import tqdm
 
@@ -48,18 +39,6 @@ MODEL_LABELS = {
     "toto": "Toto",
 }
 
-ATTENTION_LABELS = {
-    "ca": "Cross-Attention",
-    "sa": "Self-Attention",
-    "attn": "Attention",
-}
-
-ATTENTION_COLORS = {
-    "ca": "C0",
-    "sa": "C1",
-    "attn": "C0",
-}
-
 
 def _ensure_shape(tensor: torch.Tensor) -> torch.Tensor:
     """
@@ -81,22 +60,6 @@ def _ensure_shape(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.contiguous()
 
 
-def _darken_color(color: str, factor: float) -> str:
-    base_rgb = mcolors.to_rgb(color)
-    darkened = tuple(max(min(component * factor, 1.0), 0.0) for component in base_rgb)
-    return mcolors.to_hex(darkened)
-
-
-def _get_overlay_color(base_color: str, cfg: DictConfig) -> str:
-    overlay_cfg = cfg.entropic_rank.overlay
-    mode = overlay_cfg.color_mode
-    if mode == "fixed":
-        return overlay_cfg.fixed_color
-    if mode == "darken":
-        return _darken_color(base_color, float(overlay_cfg.color_factor))
-    return base_color
-
-
 def compute_entropic_rank_per_layer(
     head_outputs: dict[int, list[torch.Tensor]],
     epsilon: float,
@@ -104,12 +67,35 @@ def compute_entropic_rank_per_layer(
     """
     Compute entropic rank for each layer given the collected head outputs.
 
+    Entropic rank measures the effective dimensionality of attention head outputs,
+    quantifying how many independent directions the heads span. It is computed as:
+
+    1. Normalize each head output vector to unit norm.
+    2. Compute the Gram matrix G of pairwise cosine similarities between heads.
+    3. Compute the singular values σ_i of G (equivalently, eigenvalues since G is PSD).
+    4. Form a probability distribution p_i = √σ_i / Σ_j √σ_j from the singular values.
+    5. Compute the Shannon entropy H = -Σ_i p_i log(p_i).
+    6. Return exp(H), the entropic rank.
+
+    The entropic rank is bounded in [1, num_heads]:
+    - A value near 1 indicates highly redundant heads (all pointing in similar directions).
+    - A value near num_heads indicates maximally diverse heads (orthogonal directions).
+
+    Parameters
+    ----------
+    head_outputs : dict[int, list[torch.Tensor]]
+        Dictionary mapping layer indices to lists of head output tensors.
+        Each tensor has shape (num_samples, num_timesteps, d_model).
+    epsilon : float
+        Small constant for numerical stability in normalization and log operations.
+
     Returns
     -------
     layer_indices : np.ndarray
         Sorted array of layer indices for which activations are available.
     entropic_ranks : np.ndarray
-        Array of entropic ranks corresponding to each layer index.
+        Array of entropic ranks corresponding to each layer index, averaged
+        over all samples and timesteps.
     """
     if not head_outputs:
         return np.array([]), np.array([])
@@ -330,101 +316,6 @@ def run_inference_for_model(
         raise ValueError(f"Unsupported model for inference: {model_name}")
 
 
-def plot_entropic_rank(
-    layers: np.ndarray,
-    all_ranks: list[np.ndarray],
-    median_rank: np.ndarray,
-    title: str,
-    ylabel: str,
-    save_path: Path,
-    attention_type: str,
-    cfg: DictConfig,
-) -> None:
-    fig, ax = plt.subplots(figsize=tuple(cfg.entropic_rank.figure_size), dpi=cfg.entropic_rank.dpi)
-    color = ATTENTION_COLORS.get(attention_type, "C0")
-    overlay_color = _get_overlay_color(color, cfg)
-
-    if cfg.entropic_rank.plot_individual_curves and all_ranks:
-        for ranks in all_ranks:
-            ax.plot(
-                layers,
-                ranks,
-                color=color,
-                alpha=cfg.entropic_rank.curve_alpha,
-                linewidth=cfg.entropic_rank.individual_linewidth,
-            )
-
-    ax.plot(
-        layers,
-        median_rank,
-        color=overlay_color,
-        linewidth=cfg.entropic_rank.median_linewidth,
-        label=ATTENTION_LABELS.get(attention_type, attention_type.title()),
-        zorder=10,
-    )
-
-    ax.set_xlabel("Layer", fontweight="bold")
-    ax.set_ylabel(ylabel, fontweight="bold")
-    ax.set_title(title, fontweight="bold")
-    ax.set_xticks(layers)
-    if cfg.entropic_rank.show_grid:
-        ax.grid(alpha=0.25)
-    ax.legend(frameon=False)
-
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(save_path, format=cfg.entropic_rank.file_format)
-    plt.close(fig)
-
-
-def plot_combined_entropic_rank(
-    layers: np.ndarray,
-    median_by_type: dict[str, np.ndarray],
-    ranks_by_type: dict[str, list[np.ndarray]],
-    title: str,
-    ylabel: str,
-    save_path: Path,
-    cfg: DictConfig,
-) -> None:
-    fig, ax = plt.subplots(figsize=tuple(cfg.entropic_rank.figure_size), dpi=cfg.entropic_rank.dpi)
-
-    for attention_type, median in median_by_type.items():
-        color = ATTENTION_COLORS.get(attention_type, None)
-        overlay_color = _get_overlay_color(color, cfg) if color is not None else None
-
-        if cfg.entropic_rank.plot_individual_curves and color is not None:
-            for ranks in ranks_by_type.get(attention_type, []):
-                ax.plot(
-                    layers,
-                    ranks,
-                    color=color,
-                    alpha=cfg.entropic_rank.curve_alpha,
-                    linewidth=cfg.entropic_rank.individual_linewidth,
-                )
-
-        ax.plot(
-            layers,
-            median,
-            label=ATTENTION_LABELS.get(attention_type, attention_type.title()),
-            linewidth=cfg.entropic_rank.median_linewidth,
-            color=overlay_color if overlay_color is not None else color,
-            zorder=10,
-        )
-
-    ax.set_xlabel("Layer", fontweight="bold")
-    ax.set_ylabel(ylabel, fontweight="bold")
-    ax.set_title(title, fontweight="bold")
-    ax.set_xticks(layers)
-    if cfg.entropic_rank.show_grid:
-        ax.grid(alpha=0.25)
-    ax.legend(frameon=False)
-
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(save_path, format=cfg.entropic_rank.file_format)
-    plt.close(fig)
-
-
 def process_model(
     model_name: str,
     cfg: DictConfig,
@@ -449,6 +340,10 @@ def process_model(
     max_windows_per_series = cfg.entropic_rank.max_windows_per_series
     max_windows_total = cfg.entropic_rank.max_windows_total
     total_windows = 0
+
+    logger.info("Computing entropic rank for %s", model_name)
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info("Saving results to %s", output_dir)
 
     with torch.no_grad():
         system_items = list(datasets.items())
@@ -520,9 +415,6 @@ def process_model(
         logger.warning("No entropic rank data collected for %s.", model_name)
         return
 
-    ylabel = r"Entropic Rank $\exp\left(H\right)$"
-    model_label = MODEL_LABELS.get(model_name, model_name.title())
-
     for attention_type, ranks in per_attention_results.items():
         layers = layer_index_reference[attention_type]
         stacked = np.stack(ranks, axis=0)
@@ -535,40 +427,28 @@ def process_model(
             len(ranks),
         )
 
-        title = f"{model_label} — {ATTENTION_LABELS.get(attention_type, attention_type.title())}"
-        save_path = output_dir / f"{model_name}_{attention_type}_entropic_rank.{cfg.entropic_rank.file_format}"
-
-        plot_entropic_rank(
-            layers=layers,
-            all_ranks=list(ranks),
-            median_rank=median_rank,
-            title=title,
-            ylabel=ylabel,
-            save_path=save_path,
-            attention_type=attention_type,
-            cfg=cfg,
-        )
-
-    if model_name in {"chronos", "chronos_bolt"} and cfg.entropic_rank.include_combined:
-        required_types = [t for t in attention_types if t in {"ca", "sa"}]
-        if all(attention_type in per_attention_results for attention_type in required_types):
-            combined_layers = layer_index_reference[required_types[0]]
-            median_by_type = {
-                attention_type: np.median(np.stack(per_attention_results[attention_type], axis=0), axis=0)
-                for attention_type in required_types
-            }
-            ranks_by_type = {attention_type: per_attention_results[attention_type] for attention_type in required_types}
-            title = f"{model_label} — Cross vs Self Attention"
-            combined_path = output_dir / f"{model_name}_combined_entropic_rank.{cfg.entropic_rank.file_format}"
-            plot_combined_entropic_rank(
-                layers=combined_layers,
-                median_by_type=median_by_type,
-                ranks_by_type=ranks_by_type,
-                title=title,
-                ylabel=ylabel,
-                save_path=combined_path,
-                cfg=cfg,
+        data_path = os.path.join(output_dir, f"{model_name}_{attention_type}_entropic_rank.pkl")
+        os.makedirs(os.path.dirname(data_path), exist_ok=True)
+        # save data file to pkl
+        with open(data_path, "wb") as f:
+            pickle.dump(
+                {
+                    "layers": layers,
+                    "ranks": ranks,
+                    "median_rank": median_rank,
+                },
+                f,
             )
+
+    # save per_attention_results and layer_index_reference to pkl
+    full_dict_data_path = os.path.join(output_dir, "entropic_rank_data.pkl")
+    os.makedirs(os.path.dirname(full_dict_data_path), exist_ok=True)
+    logger.info("Saving full data (per_attention_results and layer_index_reference) to %s", full_dict_data_path)
+    with open(full_dict_data_path, "wb") as f:
+        pickle.dump(
+            {"per_attention_results": per_attention_results, "layer_index_reference": layer_index_reference},
+            f,
+        )
 
 
 @hydra.main(config_path="../config", config_name="entropic_rank", version_base=None)
@@ -587,14 +467,22 @@ def main(cfg: DictConfig) -> None:
     assert isinstance(torch_dtype, torch.dtype)
 
     datasets = prepare_test_datasets(cfg)
+    # # For debugging:
+    # datasets = dict(list(datasets.items())[:4])
+    logger.info(f"Using {len(datasets)} datasets")
+    num_test_instances = sum(test_dataset.num_test_instances for test_dataset in datasets.values())
+    num_test_instances_check = sum(len(test_dataset.datasets) for test_dataset in datasets.values())
+    assert num_test_instances == num_test_instances_check, "Number of test instances does not match"
+    logger.info(f"Total number of test instances: {num_test_instances}")
 
-    save_root = Path(cfg.entropic_rank.work_dir) / cfg.entropic_rank.save_subdir
-    save_root.mkdir(parents=True, exist_ok=True)
+    save_root = os.path.join(cfg.entropic_rank.output_root, cfg.entropic_rank.save_subdir)
+    os.makedirs(save_root, exist_ok=True)
 
     for model_name in cfg.models_to_run:
-        model_dir = save_root / model_name
+        model_dir = os.path.join(save_root, model_name)
+        logger.info("Processing %s. Data saved to %s", MODEL_LABELS.get(model_name, model_name), model_dir)
         process_model(model_name, cfg, datasets, model_dir, device, torch_dtype)
-        logger.info("Finished processing %s. Plots saved to %s", MODEL_LABELS.get(model_name, model_name), model_dir)
+        logger.info("Finished processing %s. Data saved to %s", MODEL_LABELS.get(model_name, model_name), model_dir)
 
 
 if __name__ == "__main__":

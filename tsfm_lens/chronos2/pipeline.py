@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
-import sys
 
 import torch
 
@@ -63,7 +63,9 @@ class Chronos2PipelineCustom:
         if context.dim() == 2:
             context = context.unsqueeze(-1)
         if context.dim() != 3:
-            raise ValueError(f"Expected context of shape (batch, time) or (batch, time, dim); got {tuple(context.shape)}")
+            raise ValueError(
+                f"Expected context of shape (batch, time) or (batch, time, dim); got {tuple(context.shape)}"
+            )
 
         # Chronos2 expects (batch, dim, time)
         context = context.permute(0, 2, 1)
@@ -87,3 +89,13 @@ class Chronos2PipelineCustom:
 
         return preds.to(context.device)
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name: str,
+        device: str | torch.device = "cpu",
+        **kwargs,
+    ) -> Chronos2PipelineCustom:
+        model = Chronos2Model.from_pretrained(model_name, **kwargs)  # type: ignore[attr-defined]
+        model = model.to(device)
+        return cls(model_name=model_name, model=model, device=device)
