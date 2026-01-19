@@ -39,6 +39,6 @@ pre-commit install
 ```
 This uses `.pre-commit-config.yaml` (nbstripout) to clear `*.ipynb` outputs on commit.
 
-TODOs:
+### TODOs:
 - TimesFM 2.5 doesn't work when not cuda:0 i.e. when gpu index is not 0. The predictions flatline.
 

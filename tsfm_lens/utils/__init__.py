@@ -17,12 +17,15 @@ from .eval_utils import (
     left_pad_and_stack_1D,
     load_json_data,
     normalize_by_seasonal_naive,
+    reshape_batch_data,
     save_evaluation_results,
     set_seed,
     summarize_metrics_dict,
     unify_freq,
+    validate_and_get_sample_count,
 )
 from .interp_utils import (
+    beam_search_from_fixed_logits,
     collect_attributions,
     compute_logit_metrics,
     diagnose_attention,
@@ -30,7 +33,6 @@ from .interp_utils import (
     extract_projection_weights_TimesFM2p5,
     extract_projection_weights_Toto,
     peak_count_prominence,
-    plot_combined_corner,
     plot_output_logits,
     plot_output_logits_across_layers,
 )
@@ -45,6 +47,7 @@ from .plot_utils import (
     plot_ablation_metrics_lines_over_horizon,
     plot_ablation_metrics_lines_over_layergroup,
     plot_ablation_metrics_lines_over_layergroup_combined,
+    plot_combined_corner,
     plot_forecast_and_rmse,
     plot_multi_3d_and_univariate,
     plot_single_p_prediction,
