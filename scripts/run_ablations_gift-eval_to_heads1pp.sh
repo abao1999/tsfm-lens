@@ -30,7 +30,7 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=0
+gpu_index=3
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
@@ -41,17 +41,32 @@ ablated_components="[head,mlp]"
 
 head_selection_strategy="null"
 
-model_type="timesfm"
+# model_type="timesfm"
 
 # chosen_layers=($(seq 0 19))
-chosen_layers=(7 8 9 10 11 12 13)
+# # chosen_layers=(7 8 9 10 11 12 13)
+# echo "chosen_layers: ${chosen_layers[*]}"
+# chosen_layers_mlp=(10 11)
+# echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
+
+# num_heads_per_layer_to_skip=1
+# echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
+# layers_to_keep_at_heads1pp=(7 8 9 10 11 12 13)
+# echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
+
+
+model_type="chronos_bolt"
+
+chosen_layers=($(seq 1 9))
+# chosen_layers=(7 8 9 10 11 12 13)
 echo "chosen_layers: ${chosen_layers[*]}"
-chosen_layers_mlp=()
+chosen_layers_mlp=($(seq 3 8))
+# chosen_layers_mlp=($(seq 1 5))
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
-num_heads_per_layer_to_skip=0
+num_heads_per_layer_to_skip=2
 echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-layers_to_keep_at_heads1pp=(7 8 9 10 11 12 13)
+layers_to_keep_at_heads1pp=($(seq 1 5))
 echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
 
 # =============================================================================

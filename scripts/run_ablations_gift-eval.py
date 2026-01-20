@@ -251,8 +251,16 @@ def _get_ablations_summary_str(pipeline: BaseCircuitLens, heads_to_ablate: list[
 
     ablations_summary_str = f"ablate_{n_heads_ablated}_heads"
 
-    layers_without_heads = list(pipeline.head_ablation_handles.keys())  # type: ignore
-    layers_without_mlps = list(pipeline.mlp_ablation_handles.keys())  # type: ignore
+    model_class = pipeline.__class__.__name__
+    is_chronos = model_class in ["CircuitLensChronos", "CircuitLensBolt"]
+    if is_chronos:
+        # NOTE: sa_head_ablation_handles should be the same as ca_head_ablation_handles
+        layers_without_heads = list(pipeline.sa_head_ablation_handles.keys())  # type: ignore
+        assert layers_without_heads == list(pipeline.ca_head_ablation_handles.keys())  # type: ignore
+        layers_without_mlps = list(pipeline.mlp_ablation_handles.keys())  # type: ignore
+    else:
+        layers_without_heads = list(pipeline.head_ablation_handles.keys())  # type: ignore
+        layers_without_mlps = list(pipeline.mlp_ablation_handles.keys())  # type: ignore
 
     ablations_summary_str_suffix = ""
     if layers_without_heads and layers_without_mlps:
