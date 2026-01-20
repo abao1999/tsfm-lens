@@ -52,7 +52,7 @@ class TimesFMPipelineCustom:
 
     @property
     def num_quantiles(self) -> int:
-        return int(self.model.q)
+        return int(self.model.q)  # type: ignore
 
     @property
     def model_device(self) -> torch.device:
@@ -103,7 +103,7 @@ class TimesFMPipelineCustom:
             if context_np.ndim == 2:
                 context = [context_np[i] for i in range(context_np.shape[0])]
             elif context_np.ndim == 1:
-                context = [context_np]
+                context = [context_np]  # type: ignore
             else:
                 raise ValueError(f"Unexpected context shape: {context_np.shape}")
         elif isinstance(context, list):
@@ -118,9 +118,9 @@ class TimesFMPipelineCustom:
 
         print(f"context: {len(context)} series. ")
 
-        point_forecast, quantile_forecast = self.model.forecast(
+        point_forecast, quantile_forecast = self.model.forecast(  # type: ignore
             horizon=prediction_length,
-            inputs=context,
+            inputs=context,  # type: ignore
         )
 
         # convert point_forecast and quantile_forecast to torch.Tensor

@@ -46,7 +46,7 @@ model_type="timesfm"
 # chosen_layers=($(seq 0 19))
 chosen_layers=(7 8 9 10 11 12 13)
 echo "chosen_layers: ${chosen_layers[*]}"
-chosen_layers_mlp=(10 11)
+chosen_layers_mlp=()
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
 num_heads_per_layer_to_skip=0
