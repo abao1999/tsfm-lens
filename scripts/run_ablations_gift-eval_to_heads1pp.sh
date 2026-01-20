@@ -1,26 +1,27 @@
 #!/bin/bash
 #
-# run_ablations_gift-eval.sh - Run ablation evaluations on GIFT-Eval benchmark
-#
-# NOTE: this script provides no layer-level control of when to ablate both MLPs and heads.
-#        ... until future updates, the user must commit the the same strategy for ablating all layers
+# run_ablations_gift-eval_to_heads1pp.sh - Run "heads at 1pp" ablation evaluations on GIFT-Eval
 #
 # Description:
-#   Runs a grid of ablation experiments by iterating over layers, random seeds,
-#   and number of heads to ablate. Each run completes before the next starts.
+#   Runs ablation experiments using the "heads at 1 principal component" (heads1pp) strategy.
+#   This mode loads precomputed head ablation configs from a JSON file and applies them to
+#   bring attention heads to 1pp performance. Optionally skips the last N heads per layer
+#   to preserve some capacity, except for protected layers.
 #
 # Configuration:
-#   gpu_index              - GPU device index to use
-#   model_type             - Model architecture: chronos_bolt, chronos, timesfm, toto
-#   rseeds                 - Array of random seeds for reproducibility
-#   ablated_components     - Components to ablate (e.g., "[head]")
-#   head_selection_strategy- Strategy for selecting heads (e.g., "srank", "srank_reverse")
-#   target_ablations       - Associative array mapping layer index to num_heads to ablate
-#   term                   - GIFT-Eval term filter (short, medium, long, all)
-#   max_datasets           - Maximum number of datasets to evaluate (null for all)
+#   gpu_index                    - GPU device index to use
+#   model_type                   - Model architecture: chronos_bolt, chronos, timesfm, toto
+#   rseeds                       - Array of random seeds for reproducibility
+#   ablated_components           - Components to ablate (e.g., "[head,mlp]")
+#   chosen_layers                - Array of layer indices to include in head ablation
+#   chosen_layers_mlp            - Array of layer indices for MLP ablation
+#   num_heads_per_layer_to_skip  - Number of heads to skip (keep active) per layer
+#   layers_to_keep_at_heads1pp   - Layers where all heads are ablated (no skipping)
+#   term                         - GIFT-Eval term filter (short, medium, long, all)
+#   max_datasets                 - Maximum number of datasets to evaluate (null for all)
 #
 # Usage:
-#   ./scripts/run_ablations_gift-eval.sh
+#   ./scripts/run_ablations_gift-eval_to_heads1pp.sh
 #
 
 set -e
@@ -36,21 +37,22 @@ data_dir="${WORK}/data/gift-eval"
 
 # Ablation grid parameters (bash arrays)
 rseeds=(42)
-ablated_components="[head]"
+ablated_components="[head,mlp]"
 
-head_selection_strategy="srank"
+head_selection_strategy="null"
 
 model_type="timesfm"
 
-# spec: layer -> space-separated num_heads to run
-# Generate target_ablations with all layers and all num_heads
-declare -A target_ablations
-# 1, ..., max_num_heads, null
-num_heads_str="$(seq -s ' ' 1 19) null"
-for layer in {0..19}; do
-    target_ablations[$layer]="$num_heads_str"
-done
-echo "target_ablations: ${target_ablations[*]}"
+# chosen_layers=($(seq 0 19))
+chosen_layers=(7 8 9 10 11 12 13)
+echo "chosen_layers: ${chosen_layers[*]}"
+chosen_layers_mlp=(10 11)
+echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
+
+num_heads_per_layer_to_skip=0
+echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
+layers_to_keep_at_heads1pp=(7 8 9 10 11 12 13)
+echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
 
 # =============================================================================
 # MODEL SETUP
@@ -113,36 +115,31 @@ echo "  GPU: cuda:${gpu_index}"
 echo "  Term: ${term}"
 echo "  Layers: ${!target_ablations[*]}"
 echo "  Seeds: ${rseeds[*]}"
-echo "  Components: ${ablated_components}"
 echo "  Head selection: ${head_selection_strategy}"
 echo "============================================"
 
-for layer in "${!target_ablations[@]}"; do
-    layer_spec="[${layer}]"
-    read -ra heads <<< "${target_ablations[$layer]}"
-    for rseed in "${rseeds[@]}"; do
-        for n in "${heads[@]}"; do
-            echo ""
-            echo ">>> Running: layer=${layer}, heads=${n}, seed=${rseed}"
-            echo "--------------------------------------------"
+for rseed in "${rseeds[@]}"; do
+    # Convert bash arrays to Hydra list format [a,b,c,...]
+    chosen_layers_hydra="[$(IFS=,; echo "${chosen_layers[*]}")]"
+    layers_to_keep_hydra="[$(IFS=,; echo "${layers_to_keep_at_heads1pp[*]}")]"
+    chosen_layers_mlp_hydra="[$(IFS=,; echo "${chosen_layers_mlp[*]}")]"
 
-            python scripts/run_ablations_gift-eval.py \
-                "${base_args[@]}" \
-                "${model_args[@]}" \
-                eval.rseed="${rseed}" \
-                ablation.ablations_types="${ablated_components}" \
-                ablation.ablations_layers_lst="${layer_spec}" \
-                ablation.ablate_n_heads_per_layer="${n}" \
-                ablation.head_selection_strategy="${head_selection_strategy}" \
-            && wait
+    python scripts/run_ablations_gift-eval.py \
+        "${base_args[@]}" \
+        "${model_args[@]}" \
+        eval.rseed="${rseed}" \
+        ablation.ablations_types="${ablated_components}" \
+        ablation.head_selection_strategy="${head_selection_strategy}" \
+        ablation.to_heads_at_1pp.chosen_layers="${chosen_layers_hydra}" \
+        ablation.to_heads_at_1pp.num_heads_per_layer_to_skip="${num_heads_per_layer_to_skip}" \
+        ablation.to_heads_at_1pp.layers_to_keep_at_heads1pp="${layers_to_keep_hydra}" \
+        ablation.to_heads_at_1pp.chosen_layers_mlp="${chosen_layers_mlp_hydra}" \
+        && wait
 
-            echo ">>> Completed: layer=${layer}, heads=${n}, seed=${rseed}"
-        done
-    done
+    echo ">>> Completed: seed=${rseed}"
+    
 done
 
-
-echo ""
 echo "============================================"
 echo "All evaluations complete!"
 echo "============================================"

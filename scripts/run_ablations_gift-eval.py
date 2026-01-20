@@ -7,6 +7,7 @@ import csv
 import json
 import logging
 import os
+from itertools import groupby
 from typing import Literal
 
 import hydra
@@ -234,7 +235,7 @@ def setup_ablations_by_strategy(
     else:
         raise ValueError(f"Invalid strategy: {strategy}")
 
-    logger.info(f"Ablating heads: {heads_to_ablate}")
+    logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
     pipeline.add_ablation_hooks_explicit(
         ablations_types=ablations_types,
         layers_to_ablate_mlp=layers,
@@ -242,6 +243,102 @@ def setup_ablations_by_strategy(
     )
 
     return f"{'-'.join(ablations_types)}_layers_{'-'.join(map(str, layers))}_heads-{n_heads or 'all'}"
+
+
+def _get_ablations_summary_str(pipeline: BaseCircuitLens, heads_to_ablate: list[tuple[int, int]]) -> str:
+    n_heads_ablated = len(heads_to_ablate)
+    logger.info(f"{n_heads_ablated} heads_to_ablate")
+
+    ablations_summary_str = f"ablate_{n_heads_ablated}_heads"
+
+    layers_without_heads = list(pipeline.head_ablation_handles.keys())  # type: ignore
+    layers_without_mlps = list(pipeline.mlp_ablation_handles.keys())  # type: ignore
+
+    ablations_summary_str_suffix = ""
+    if layers_without_heads and layers_without_mlps:
+        ablations_summary_str_suffix = f"za_heads_layers_{'-'.join(map(str, layers_without_heads))}-mlps_layers_{'-'.join(map(str, layers_without_mlps))}"
+    elif layers_without_heads:
+        ablations_summary_str_suffix = f"za_heads_layers_{'-'.join(map(str, layers_without_heads))}"
+    elif layers_without_mlps:
+        ablations_summary_str_suffix = f"za_mlps_layers_{'-'.join(map(str, layers_without_mlps))}"
+    else:
+        ablations_summary_str_suffix = ""
+
+    if ablations_summary_str_suffix:
+        ablations_summary_str += "_" + ablations_summary_str_suffix
+
+    return ablations_summary_str
+
+
+def setup_ablations_to_heads_at_1pp(
+    pipeline: BaseCircuitLens,
+    chosen_layers: list[int],
+    num_heads_per_layer_to_skip: int,
+    layers_to_keep_at_heads1pp: list[int],
+    chosen_layers_mlp: list[int],
+) -> str | None:
+    """
+    Configure ablations to bring heads to 1 principal component (1pp) performance.
+
+    Loads precomputed head ablation configurations from a JSON file and applies them
+    to the pipeline. The ablation list is filtered to only include the specified layers,
+    then for each layer, the last `num_heads_per_layer_to_skip` heads are removed from
+    ablation (i.e., kept active) unless the layer is in `layers_to_keep_at_heads1pp`.
+
+    Args:
+        pipeline: The CircuitLens model pipeline to configure ablations on.
+        chosen_layers: List of layer indices to include in the ablation.
+        num_heads_per_layer_to_skip: Number of heads to skip (keep active) per layer.
+            If 0, all chosen layers are treated as layers to keep at heads1pp.
+        layers_to_keep_at_heads1pp: Layers where all heads from the JSON config should
+            be ablated (no heads skipped).
+        chosen_layers_mlp: List of layer indices for MLP ablation.
+
+    Returns:
+        A string summarizing the ablation configuration (e.g., "heads1pp_ablate_N_heads_..."),
+        or None if no ablations are configured.
+
+    Note:
+        The JSON file contains [layer, head] pairs specifying which heads to ablate.
+        Heads are grouped by layer and sorted, then the last `num_heads_per_layer_to_skip`
+        heads are removed from each layer's ablation list (except for protected layers).
+    """
+    heads_to_ablate = json.load(
+        open(os.path.join(ASSETS_DIR, f"{pipeline.__class__.__name__}_ablate_for_heads_at_1pp.json"))
+    )
+    heads_to_ablate = [config for config in heads_to_ablate if config[0] in chosen_layers]
+    if num_heads_per_layer_to_skip == 0:
+        layers_to_keep_at_heads1pp = chosen_layers
+
+    heads_to_ablate = [
+        config
+        for layer, group in groupby(sorted(heads_to_ablate, key=lambda x: x[0]), key=lambda x: x[0])
+        for config in (
+            list(group) if layer in layers_to_keep_at_heads1pp else list(group)[:-num_heads_per_layer_to_skip]
+        )
+    ]
+
+    logger.info(f"Ablating {len(heads_to_ablate)} heads")
+
+    pipeline.remove_all_hooks()
+    if hasattr(pipeline, "reset_attribution_inputs_and_outputs"):
+        pipeline.reset_attribution_inputs_and_outputs()
+
+    logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
+    pipeline.add_ablation_hooks_explicit(
+        ablations_types=["head", "mlp"],
+        layers_to_ablate_mlp=chosen_layers_mlp,
+        heads_to_ablate=heads_to_ablate,
+    )
+
+    for layer in chosen_layers:
+        num_heads = sum(1 for config in heads_to_ablate if config[0] == layer)
+        logger.info(f"Layer {layer}: {num_heads} heads")
+
+    ablations_summary_str = _get_ablations_summary_str(pipeline, heads_to_ablate)
+    logger.info(f"Ablations summary string: {ablations_summary_str}")
+
+    return f"heads1pp_{ablations_summary_str}"
 
 
 class ChronosPredictor:
@@ -471,32 +568,51 @@ def main(cfg):
     clear_cuda_cache(device)
 
     pipeline = load_model(cfg.ablation.model_type, cfg, device=device, torch_dtype=torch_dtype)
-    # NOTE: setup_ablations_by_strategy modifies the pipeline in-place by adding the ablations hooks
-    ablations_name = setup_ablations_by_strategy(
-        pipeline,
-        ablations_layers_lst=cfg.ablation.ablations_layers_lst,
-        ablations_types=cfg.ablation.ablations_types,
-        ablate_n_heads_per_layer=cfg.ablation.ablate_n_heads_per_layer,
-        head_selection_strategy=cfg.ablation.head_selection_strategy,
-        rseed=cfg.eval.rseed,
-    )
+
+    head_selection_strategy = cfg.ablation.head_selection_strategy
+
+    # NOTE: setup_ablations* modifies the pipeline in-place by adding the ablations hooks
+    if head_selection_strategy is None:
+        logger.info("No head selection strategy provided, defaulting to ablate to heads@1pp")
+        ablations_name = setup_ablations_to_heads_at_1pp(
+            pipeline,
+            chosen_layers=cfg.ablation.to_heads_at_1pp.chosen_layers,
+            num_heads_per_layer_to_skip=cfg.ablation.to_heads_at_1pp.num_heads_per_layer_to_skip,
+            layers_to_keep_at_heads1pp=cfg.ablation.to_heads_at_1pp.layers_to_keep_at_heads1pp,
+            chosen_layers_mlp=cfg.ablation.to_heads_at_1pp.chosen_layers_mlp,
+        )
+        output_dir = os.path.join(
+            cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
+            cfg.ablation.model_name_str,
+            f"heads1pp_rseed-{cfg.eval.rseed}",
+        )
+    else:
+        logger.info(f"Ablating by {head_selection_strategy}")
+        ablations_name = setup_ablations_by_strategy(
+            pipeline,
+            ablations_layers_lst=cfg.ablation.ablations_layers_lst,
+            ablations_types=cfg.ablation.ablations_types,
+            ablate_n_heads_per_layer=cfg.ablation.ablate_n_heads_per_layer,
+            head_selection_strategy=head_selection_strategy,
+            rseed=cfg.eval.rseed,
+        )
+        # Output paths
+        if not cfg.ablation.model_name_str:
+            raise ValueError("model_name_str is required")
+
+        strategy_prefix = {s: f"{s}_" for s in ["alignment", "alignment_reverse", "srank", "srank_reverse", "random"]}
+
+        output_dir = os.path.join(
+            cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
+            cfg.ablation.model_name_str,
+            f"{strategy_prefix[cfg.ablation.head_selection_strategy]}rseed-{cfg.eval.rseed}",
+        )
 
     # Suppress GluonTS warning
     logging.getLogger("gluonts.model.forecast").addFilter(
         type("Filter", (logging.Filter,), {"filter": lambda s, r: "mean prediction" not in r.getMessage().lower()})()
     )
 
-    # Output paths
-    if not cfg.ablation.model_name_str:
-        raise ValueError("model_name_str is required")
-
-    strategy_prefix = {s: f"{s}_" for s in ["alignment", "alignment_reverse", "srank", "srank_reverse", "random"]}
-
-    output_dir = os.path.join(
-        cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
-        cfg.ablation.model_name_str,
-        f"{strategy_prefix[cfg.ablation.head_selection_strategy]}rseed-{cfg.eval.rseed}",
-    )
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join(output_dir, f"{ablations_name or 'original'}_{gift_cfg.term}_results.csv")
     logger.info(f"Results: {csv_path}")
