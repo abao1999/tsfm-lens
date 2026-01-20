@@ -13,6 +13,7 @@ from .data_utils import (
 )
 from .eval_utils import (
     calculate_rmse,
+    clear_cuda_cache,
     combine_metrics_dicts,
     left_pad_and_stack_1D,
     load_json_data,

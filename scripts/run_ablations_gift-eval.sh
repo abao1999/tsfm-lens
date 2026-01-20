@@ -2,6 +2,9 @@
 #
 # run_ablations_gift-eval.sh - Run ablation evaluations on GIFT-Eval benchmark
 #
+# NOTE: this script provides no layer-level control of when to ablate both MLPs and heads.
+#        ... until future updates, the user must commit the the same strategy for ablating all layers
+#
 # Description:
 #   Runs a grid of ablation experiments by iterating over layers, random seeds,
 #   and number of heads to ablate. Each run completes before the next starts.
@@ -40,26 +43,13 @@ head_selection_strategy="srank"
 model_type="timesfm"
 
 # Failed ablations: layer -> space-separated num_heads to re-run
-declare -A target_ablations=(
-    ["0"]="3 5 7 9 11 13 14 15"
-    ["1"]="3 5"
-    ["2"]="9 11 13 14"
-    ["3"]="14"
-    ["4"]="9 10 14"
-    ["6"]="9 14"
-    ["9"]="4 6 15"
-    ["10"]="7 9 11 14 15"
-    ["11"]="14"
-    ["12"]="7 9 11 13 14 15"
-    ["13"]="1 2 3 5 7 11 12 13 15"
-    ["14"]="14"
-    ["15"]="3 5 9 11 13 14 15"
-    ["16"]="7 11 14 15 null"
-    ["17"]="3 5 7 9 11"
-    ["18"]="11 15"
-    ["19"]="1 2 3 4 5 11 13 14"
-)
-
+# Generate target_ablations with all layers and all num_heads
+declare -A target_ablations
+# 1, ..., max_num_heads, null
+num_heads_str="$(seq -s ' ' 1 19) null"
+for layer in {0..19}; do
+    target_ablations[$layer]="$num_heads_str"
+done
 echo "target_ablations: ${target_ablations[*]}"
 
 # =============================================================================

@@ -2,6 +2,7 @@
 utils for evaluation scripts
 """
 
+import gc
 import json
 import logging
 import os
@@ -28,6 +29,20 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.cuda.manual_seed(seed)
     # transformers.set_seed(seed)
+
+
+def clear_cuda_cache(device: torch.device) -> None:
+    """
+    Clear the CUDA cache.
+    """
+    # Clear CUDA cache and load model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        with torch.cuda.device(device):
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
 
 
 def reshape_batch_data(

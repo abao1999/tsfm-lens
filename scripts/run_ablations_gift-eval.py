@@ -4,10 +4,10 @@ Configuration is managed via Hydra config files.
 """
 
 import csv
-import gc
 import json
 import logging
 import os
+from typing import Literal
 
 import hydra
 import numpy as np
@@ -42,7 +42,7 @@ from tsfm_lens.dataset import GiftEvalDataset
 from tsfm_lens.timesfm.circuitlens import CircuitLensTimesFM
 from tsfm_lens.toto.circuitlens import CircuitLensToto
 from tsfm_lens.toto.predictor import EvalTask, toto_evaluate_tasks
-from tsfm_lens.utils import set_seed
+from tsfm_lens.utils import clear_cuda_cache, set_seed
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
 DATASET_PROPERTIES_PATH = os.path.join(ASSETS_DIR, "dataset_properties.json")
@@ -150,7 +150,14 @@ def load_model(
     return pipeline
 
 
-def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
+def setup_ablations_by_strategy(
+    pipeline: BaseCircuitLens,
+    ablations_layers_lst: list[int] | None,
+    ablations_types: list[Literal["head", "mlp"]],
+    ablate_n_heads_per_layer: int | None,
+    head_selection_strategy: str,
+    rseed: int,
+) -> str | None:
     """
     Configure ablation hooks on the model pipeline based on the specified strategy.
 
@@ -160,17 +167,16 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
 
     Args:
         pipeline: The CircuitLens model pipeline to configure ablations on.
-        cfg: Hydra config containing ablation settings:
-            - cfg.ablation.ablations_layers_lst: List of layer indices to ablate (None to skip)
-            - cfg.ablation.ablations_types: List of component types to ablate (e.g., ["head"])
-            - cfg.ablation.ablate_n_heads_per_layer: Number of heads to ablate per layer (None for all)
-            - cfg.ablation.head_selection_strategy: One of:
-                - "random": Random head selection (seeded by cfg.eval.rseed)
-                - "srank": Select heads with lowest stable rank (least important)
-                - "srank_reverse": Select heads with highest srank (most important)
-                - "alignment": Select heads with highest alignment scores
-                - "alignment_reverse": Select heads with lowest alignment scores
-            - cfg.eval.rseed: Random seed for reproducible random selection
+        ablations_layers_lst: List of layer indices to ablate (None to skip ablations).
+        ablations_types: List of component types to ablate (e.g., ["head"]).
+        ablate_n_heads_per_layer: Number of heads to ablate per layer (None for all).
+        head_selection_strategy: One of:
+            - "random": Random head selection (seeded by rseed)
+            - "srank": Select heads with lowest stable rank (least important)
+            - "srank_reverse": Select heads with highest srank (most important)
+            - "alignment": Select heads with highest alignment scores
+            - "alignment_reverse": Select heads with lowest alignment scores
+        rseed: Random seed for reproducible random selection.
 
     Returns:
         A string describing the ablation configuration (e.g., "head_layers_1-2_heads-10"),
@@ -179,14 +185,13 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
     Raises:
         ValueError: If the required ranking file is not found for srank/alignment strategies.
     """
-    if cfg.ablation.ablations_layers_lst is None:
+    if ablations_layers_lst is None:
         logger.info("No ablations configured")
         return None
 
-    ablations_types = cfg.ablation.ablations_types
-    layers = cfg.ablation.ablations_layers_lst
-    n_heads = cfg.ablation.ablate_n_heads_per_layer
-    strategy = cfg.ablation.head_selection_strategy
+    layers = ablations_layers_lst
+    n_heads = ablate_n_heads_per_layer
+    strategy = head_selection_strategy
 
     logger.info(f"Ablations: types={ablations_types}, layers={layers}, n_heads={n_heads}, strategy={strategy}")
 
@@ -196,8 +201,8 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
 
     # Select heads based on strategy
     if strategy == "random":
-        rng = np.random.default_rng(cfg.eval.rseed)
-        logger.info(f"Selecting heads randomly with seed {cfg.eval.rseed}")
+        rng = np.random.default_rng(rseed)
+        logger.info(f"Selecting heads randomly with seed {rseed}")
         if n_heads is None:
             heads_to_ablate = [(layer, h) for layer in layers for h in range(pipeline.num_heads)]
         else:
@@ -205,7 +210,7 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
             for layer in layers:
                 selected = rng.choice(pipeline.num_heads, size=n_heads, replace=False)
                 heads_to_ablate.extend((layer, h) for h in selected)
-    else:
+    elif strategy in ["srank", "srank_reverse", "alignment", "alignment_reverse"]:
         # Load ranking file (srank or alignment)
         ranking_type = "srank" if "srank" in strategy else "alignment"
         ranking_path = os.path.join(
@@ -226,6 +231,8 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
             if reverse:
                 head_list = head_list[::-1]
             heads_to_ablate.extend((int(layer), int(h)) for h in head_list[:n_heads])
+    else:
+        raise ValueError(f"Invalid strategy: {strategy}")
 
     logger.info(f"Ablating heads: {heads_to_ablate}")
     pipeline.add_ablation_hooks_explicit(
@@ -398,8 +405,14 @@ def run_standard_evaluation(
             # Create predictor
             if model_type == "timesfm":
                 predictor = TimesFmPredictor(pipeline.model, dataset.prediction_length, cfg.eval.rseed)
+            elif model_type in ["chronos", "chronos_bolt"]:
+                predictor = ChronosPredictor(
+                    pipeline, dataset.prediction_length, num_samples=cfg.chronos.num_samples, rseed=cfg.eval.rseed
+                )
+            elif model_type == "toto":
+                raise ValueError("Use run_toto_evaluation() for Toto models")
             else:
-                predictor = ChronosPredictor(pipeline, dataset.prediction_length, rseed=cfg.eval.rseed)
+                raise NotImplementedError(f"Predictor not implemented for model type: {model_type}")
 
             # Evaluate
             res = evaluate_model(
@@ -455,16 +468,18 @@ def main(cfg):
         dataset_properties_map = json.load(f)
 
     # Clear CUDA cache and load model
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        with torch.cuda.device(device):
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            torch.cuda.reset_peak_memory_stats()
+    clear_cuda_cache(device)
 
     pipeline = load_model(cfg.ablation.model_type, cfg, device=device, torch_dtype=torch_dtype)
-    ablations_name = setup_ablations(pipeline, cfg)
+    # NOTE: setup_ablations_by_strategy modifies the pipeline in-place by adding the ablations hooks
+    ablations_name = setup_ablations_by_strategy(
+        pipeline,
+        ablations_layers_lst=cfg.ablation.ablations_layers_lst,
+        ablations_types=cfg.ablation.ablations_types,
+        ablate_n_heads_per_layer=cfg.ablation.ablate_n_heads_per_layer,
+        head_selection_strategy=cfg.ablation.head_selection_strategy,
+        rseed=cfg.eval.rseed,
+    )
 
     # Suppress GluonTS warning
     logging.getLogger("gluonts.model.forecast").addFilter(

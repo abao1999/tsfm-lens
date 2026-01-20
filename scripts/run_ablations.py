@@ -2,7 +2,6 @@
 Combined ablations script
 """
 
-import gc
 import json
 import logging
 import os
@@ -18,6 +17,7 @@ from tsfm_lens.evaluation import evaluate_ablations
 from tsfm_lens.timesfm.circuitlens import CircuitLensTimesFM
 from tsfm_lens.toto.circuitlens import CircuitLensToto
 from tsfm_lens.utils import (
+    clear_cuda_cache,
     get_dim_from_dataset,
     get_eval_data_dict,
     get_gift_eval_data_dict,
@@ -37,15 +37,7 @@ def main(cfg):
     assert isinstance(torch_dtype, torch.dtype)
     logger.info(f"Using device: {device}, with torch_dtype: {torch_dtype}")
 
-    gc.collect()
-    # Clear CUDA caches
-    if torch.cuda.is_available():
-        print(f"Current GPU: {torch.cuda.get_device_name()}")
-        with torch.cuda.device(device):
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            torch.cuda.reset_peak_memory_stats()
-        print(f"Cleared CUDA caches for device {device}")
+    clear_cuda_cache(device)
 
     # Determine which model type to use
     model_type = cfg.ablation.model_type
@@ -272,7 +264,10 @@ def main(cfg):
             metrics_save_dir, "original_vs_labels", nheads_per_layer_str, f"{cfg.eval.metrics_fname}.json"
         ): metrics,
         os.path.join(
-            metrics_save_dir, "ablations_vs_original", nheads_per_layer_str, f"{cfg.eval.metrics_fname}_ablations_against_original.json"
+            metrics_save_dir,
+            "ablations_vs_original",
+            nheads_per_layer_str,
+            f"{cfg.eval.metrics_fname}_ablations_against_original.json",
         ): metrics_from_ablations,
         os.path.join(
             metrics_save_dir,
