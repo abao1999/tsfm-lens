@@ -41,4 +41,4 @@ This uses `.pre-commit-config.yaml` (nbstripout) to clear `*.ipynb` outputs on c
 
 ### TODOs:
 + TimesFM 2.5 doesn't work when not cuda:0 i.e. when gpu index is not 0. The predictions flatline.
-
++ Make the circuitlens `add_ablation_hooks_explicit` function signature more intuitive

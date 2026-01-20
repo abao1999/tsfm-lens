@@ -346,6 +346,16 @@ def setup_ablations_to_heads_at_1pp(
     ablations_summary_str = _get_ablations_summary_str(pipeline, heads_to_ablate)
     logger.info(f"Ablations summary string: {ablations_summary_str}")
 
+    # We keep track of the additional flexibility to the heads@1pp ablation
+    extra_suffix = ""
+    if num_heads_per_layer_to_skip > 0 and len(chosen_layers) > 0:
+        logger.info(
+            f"Additional flexibility to the heads@1pp ablation: num_heads_per_layer_to_skip={num_heads_per_layer_to_skip}, layers_to_keep_at_heads1pp={'-'.join(map(str, layers_to_keep_at_heads1pp))}"
+        )
+        extra_suffix = f"num_heads_per_layer_to_skip-{num_heads_per_layer_to_skip}_layers_to_keep_at_heads1pp-{'-'.join(map(str, layers_to_keep_at_heads1pp))}"
+    ablations_summary_str += f"_{extra_suffix}"
+    logger.info(f"Ablations summary string with extra suffix: {ablations_summary_str}")
+
     return f"heads1pp_{ablations_summary_str}"
 
 
