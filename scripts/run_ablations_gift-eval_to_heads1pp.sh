@@ -30,7 +30,7 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=3
+gpu_index=1
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
@@ -57,12 +57,13 @@ head_selection_strategy="null"
 
 model_type="chronos_bolt"
 
-chosen_layers=($(seq 1 10))
+chosen_layers=()
+# chosen_layers=($(seq 1 10))
 # chosen_layers=($(seq 2 5))
 # chosen_layers=(7 8 9 10 11 12 13)
 echo "chosen_layers: ${chosen_layers[*]}"
 # chosen_layers_mlp=($(seq 3 8))
-chosen_layers_mlp=($(seq 2 6))
+chosen_layers_mlp=($(seq 1 9))
 # chosen_layers_mlp=($(seq 1 5))
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
