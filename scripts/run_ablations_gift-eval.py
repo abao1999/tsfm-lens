@@ -40,6 +40,7 @@ from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 from tsfm_lens.chronos_bolt.circuitlens import CircuitLensBolt
 from tsfm_lens.circuitlens import BaseCircuitLens
 from tsfm_lens.dataset import GiftEvalDataset
+from tsfm_lens.moirai.circuitlens import CircuitLensMoirai
 from tsfm_lens.timesfm.circuitlens import CircuitLensTimesFM
 from tsfm_lens.toto.circuitlens import CircuitLensToto
 from tsfm_lens.toto.predictor import EvalTask, toto_evaluate_tasks
@@ -133,6 +134,11 @@ def load_model(
     torch_dtype = torch_dtype or getattr(torch, cfg.eval.torch_dtype) or torch.float32
     assert isinstance(torch_dtype, torch.dtype)
     logger.info(f"Using device: {device}, torch_dtype: {torch_dtype}")
+    # NOTE: we follow the settings of the Gift-Eval example notebooks and of each model's github demo
+    # TimesFM 2.5 max context length is set to 2048 (see TimesFMPipelineCustom constructor)
+    # Chronos and Chronos Bolt max context length is default 512 (see the Chronos offical repo)
+    # Toto max context length is set to 4096 (see tsfm_lens/toto/predictor.py and toto offical repo)
+    # Moirai max context length is set to 4000 here explicitly, following their Gift-Eval convention
     loaders = {
         "timesfm": lambda: CircuitLensTimesFM(cfg.timesfm.model_id, device_map=device_map),
         "chronos": lambda: CircuitLensChronos.from_pretrained(
@@ -142,7 +148,18 @@ def load_model(
             cfg.chronos_bolt.model_id, device_map=device_map, torch_dtype=torch_dtype
         ),
         "toto": lambda: CircuitLensToto(cfg.toto.model_id, device_map=device_map),
+        "moirai": lambda: CircuitLensMoirai(
+            cfg.moirai.model_id,
+            context_length=4000,
+            prediction_length=1,  # NOTE: this is arbitrary, just a placeholder
+            patch_size=cfg.moirai.patch_size,  # NOTE: try "auto". This can also be replaced in .predict() method
+            num_samples=cfg.moirai.num_samples,  # NOTE: this is a placeholder, can be replaced in .predict() method
+            target_dim=1,
+            device=device_map,
+        ),
     }
+    # logger.info the model type's config
+    logger.info(f"Using {model_type} config: {dict(cfg)[model_type]}")
     if model_type not in loaders:
         raise ValueError(f"Invalid model type: {model_type}")
     pipeline = loaders[model_type]()
@@ -470,7 +487,7 @@ def run_toto_evaluation(
 
 def run_standard_evaluation(
     pipeline: BaseCircuitLens,
-    model_type: str,
+    model_type: Literal["timesfm", "chronos", "chronos_bolt", "moirai"],
     cfg: DictConfig,
     selected_dataset_names: list[str],
     selected_term: str,
@@ -478,9 +495,10 @@ def run_standard_evaluation(
     dataset_properties_map: dict[str, dict],
     csv_path: str,
     row_header: list[str],
+    batch_size: int = 1024,
 ):
     """
-    Run evaluation pipeline for TimesFM, Chronos, and Chronos-Bolt models.
+    Run evaluation pipeline for TimesFM, Chronos, Chronos-Bolt, and Moirai models.
 
     Iterates over selected datasets and terms, creates forecasts using the
     appropriate predictor, computes evaluation metrics, and writes results
@@ -488,7 +506,7 @@ def run_standard_evaluation(
 
     Args:
         pipeline: The CircuitLens model pipeline to use for predictions.
-        model_type: Model identifier ("timesfm", "chronos", or "chronos_bolt").
+        model_type: Model identifier ("timesfm", "chronos", or "chronos_bolt", "moirai").
         cfg: Hydra config containing evaluation settings (data_dir, rseed, etc.).
         selected_dataset_names: List of GIFT-Eval dataset names to evaluate.
         selected_term: Forecast horizon term filter ("short", "medium", "long", "all").
@@ -509,13 +527,18 @@ def run_standard_evaluation(
         for term in get_dataset_terms(ds_name, selected_term, medium_long_datasets):
             ds_key, ds_freq = parse_dataset_key(ds_name, dataset_properties_map)
 
-            # Check if univariate conversion needed
             to_univariate = cfg.eval.gift_eval.to_univariate
-            if not to_univariate:
-                to_univariate = (
-                    GiftEvalDataset(name=ds_name, term=term, to_univariate=False, data_dir=cfg.eval.data_dir).target_dim
-                    != 1
-                )
+
+            if model_type not in ["moirai", "moirai2"]:
+                # NOTE: since Moirai supports multivariate time series forecast, there is no need to convert the original data into univariate
+                # Check if univariate conversion needed
+                if not to_univariate:
+                    to_univariate = (
+                        GiftEvalDataset(
+                            name=ds_name, term=term, to_univariate=False, data_dir=cfg.eval.data_dir
+                        ).target_dim
+                        != 1
+                    )
 
             dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=to_univariate, data_dir=cfg.eval.data_dir)
 
@@ -526,6 +549,14 @@ def run_standard_evaluation(
                 predictor = ChronosPredictor(
                     pipeline, dataset.prediction_length, num_samples=cfg.chronos.num_samples, rseed=cfg.eval.rseed
                 )
+            elif model_type == "moirai":
+                # set the Moirai hyperparameter according to each dataset, then create the predictor
+                pipeline.model.hparams.prediction_length = dataset.prediction_length
+                pipeline.model.hparams.target_dim = dataset.target_dim
+                pipeline.model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
+
+                predictor = pipeline.model.create_predictor(batch_size=512)
+
             elif model_type == "toto":
                 raise ValueError("Use run_toto_evaluation() for Toto models")
             else:
@@ -536,11 +567,11 @@ def run_standard_evaluation(
                 predictor,  # type: ignore[arg-type]
                 test_data=dataset.test_data,
                 metrics=METRICS,
-                batch_size=1024,
+                batch_size=batch_size,  # default batch size is 1024
                 axis=None,
                 mask_invalid_label=True,
                 allow_nan_forecast=False,
-                seasonality=get_seasonality(dataset.freq),
+                seasonality=get_seasonality(dataset.freq),  # season length
             )
 
             # Build result row
@@ -592,8 +623,13 @@ def main(cfg):
     head_selection_strategy = cfg.ablation.head_selection_strategy
 
     # NOTE: setup_ablations* modifies the pipeline in-place by adding the ablations hooks
+    ablations_name = None
+    output_subdir_name = "original"
     if head_selection_strategy is None:
-        logger.info("No head selection strategy provided, defaulting to ablate to heads@1pp")
+        logger.info("Skipping ablations")
+        pass
+    elif head_selection_strategy == "heads1pp":
+        logger.info("Ablating to heads@1pp")
         ablations_name = setup_ablations_to_heads_at_1pp(
             pipeline,
             chosen_layers=cfg.ablation.to_heads_at_1pp.chosen_layers,
@@ -601,12 +637,9 @@ def main(cfg):
             layers_to_keep_at_heads1pp=cfg.ablation.to_heads_at_1pp.layers_to_keep_at_heads1pp,
             chosen_layers_mlp=cfg.ablation.to_heads_at_1pp.chosen_layers_mlp,
         )
-        output_dir = os.path.join(
-            cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
-            cfg.ablation.model_name_str,
-            f"heads1pp_rseed-{cfg.eval.rseed}",
-        )
-    else:
+        output_subdir_name = f"heads1pp_rseed-{cfg.eval.rseed}"
+
+    elif head_selection_strategy in ["random", "srank", "srank_reverse", "alignment", "alignment_reverse"]:
         logger.info(f"Ablating by {head_selection_strategy}")
         ablations_name = setup_ablations_by_strategy(
             pipeline,
@@ -621,12 +654,17 @@ def main(cfg):
             raise ValueError("model_name_str is required")
 
         strategy_prefix = {s: f"{s}_" for s in ["alignment", "alignment_reverse", "srank", "srank_reverse", "random"]}
+        output_subdir_name = f"{strategy_prefix[head_selection_strategy]}rseed-{cfg.eval.rseed}"
+    else:
+        raise ValueError(f"Invalid head selection strategy: {head_selection_strategy}")
 
-        output_dir = os.path.join(
-            cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
-            cfg.ablation.model_name_str,
-            f"{strategy_prefix[cfg.ablation.head_selection_strategy]}rseed-{cfg.eval.rseed}",
-        )
+    # directory to save results into
+    output_dir = os.path.join(
+        cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
+        cfg.ablation.model_name_str,
+        output_subdir_name,
+    )
+    logger.info(f"Results will be saved to: {output_dir}")
 
     # Suppress GluonTS warning
     logging.getLogger("gluonts.model.forecast").addFilter(

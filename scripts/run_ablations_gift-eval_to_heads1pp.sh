@@ -39,7 +39,7 @@ data_dir="${WORK}/data/gift-eval"
 rseeds=(42)
 ablated_components="[head,mlp]"
 
-head_selection_strategy="null"
+head_selection_strategy="heads1pp"
 
 # model_type="timesfm"
 

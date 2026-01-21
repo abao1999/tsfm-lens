@@ -29,7 +29,7 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=0
+gpu_index=1
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
@@ -38,19 +38,22 @@ data_dir="${WORK}/data/gift-eval"
 rseeds=(42)
 ablated_components="[head]"
 
-head_selection_strategy="srank"
+head_selection_strategy="null" # "null" to disable ablations
 
-model_type="timesfm"
+model_type="moirai"
 
 # spec: layer -> space-separated num_heads to run
 # Generate target_ablations with all layers and all num_heads
 declare -A target_ablations
 # 1, ..., max_num_heads, null
-num_heads_str="$(seq -s ' ' 1 19) null"
-for layer in {0..19}; do
+num_heads_str="$(seq -s ' ' 1 11) null"
+for layer in {0..11}; do
     target_ablations[$layer]="$num_heads_str"
 done
-echo "target_ablations: ${target_ablations[*]}"
+
+if [ "$head_selection_strategy" != "null" ]; then
+    echo "target_ablations: ${target_ablations[*]}"
+fi
 
 # =============================================================================
 # MODEL SETUP
@@ -60,6 +63,7 @@ declare -A model_names=(
     ["chronos_bolt"]="amazon/chronos-bolt-base"
     ["chronos"]="amazon/chronos-t5-base"
     ["toto"]="Datadog/Toto-Open-Base-1.0"
+    ["moirai"]="Salesforce/moirai-1.1-R-base"
 )
 
 model_name="${model_names[$model_type]}"
@@ -77,6 +81,7 @@ declare -A model_args_map=(
     ["chronos"]="chronos.model_id=${model_name} chronos.limit_prediction_length=false chronos.num_samples=10 chronos.deterministic=false"
     ["timesfm"]="timesfm.model_id=${model_name}"
     ["toto"]="toto.model_id=${model_name} toto.samples_per_batch=20 toto.use_kv_cache=true toto.pad_short_series=false"
+    ["moirai"]="moirai.model_id=${model_name} moirai.patch_size=32 moirai.num_samples=20"
 )
 
 # Special handling for toto: append samples_per_batch to model_name_str
@@ -105,42 +110,60 @@ base_args=(
 # =============================================================================
 # RUN ABLATION GRID
 # =============================================================================
-echo "============================================"
-echo "Ablation Evaluation Configuration"
-echo "============================================"
-echo "  Model: ${model_name} (${model_type})"
-echo "  GPU: cuda:${gpu_index}"
-echo "  Term: ${term}"
-echo "  Layers: ${!target_ablations[*]}"
-echo "  Seeds: ${rseeds[*]}"
-echo "  Components: ${ablated_components}"
-echo "  Head selection: ${head_selection_strategy}"
-echo "============================================"
+if [ "$head_selection_strategy" != "null" ]; then
+    echo "============================================"
+    echo "Ablation Evaluation Configuration"
+    echo "============================================"
+    echo "  Model: ${model_name} (${model_type})"
+    echo "  GPU: cuda:${gpu_index}"
+    echo "  Term: ${term}"
+    echo "  Layers: ${!target_ablations[*]}"
+    echo "  Seeds: ${rseeds[*]}"
+    echo "  Components: ${ablated_components}"
+    echo "  Head selection: ${head_selection_strategy}"
+    echo "============================================"
 
-for layer in "${!target_ablations[@]}"; do
-    layer_spec="[${layer}]"
-    read -ra heads <<< "${target_ablations[$layer]}"
-    for rseed in "${rseeds[@]}"; do
-        for n in "${heads[@]}"; do
-            echo ""
-            echo ">>> Running: layer=${layer}, heads=${n}, seed=${rseed}"
-            echo "--------------------------------------------"
+    for layer in "${!target_ablations[@]}"; do
+        layer_spec="[${layer}]"
+        read -ra heads <<< "${target_ablations[$layer]}"
+        for rseed in "${rseeds[@]}"; do
+            for n in "${heads[@]}"; do
+                echo ""
+                echo ">>> Running: layer=${layer}, heads=${n}, seed=${rseed}"
+                echo "--------------------------------------------"
 
-            python scripts/run_ablations_gift-eval.py \
-                "${base_args[@]}" \
-                "${model_args[@]}" \
-                eval.rseed="${rseed}" \
-                ablation.ablations_types="${ablated_components}" \
-                ablation.ablations_layers_lst="${layer_spec}" \
-                ablation.ablate_n_heads_per_layer="${n}" \
-                ablation.head_selection_strategy="${head_selection_strategy}" \
-            && wait
+                python scripts/run_ablations_gift-eval.py \
+                    "${base_args[@]}" \
+                    "${model_args[@]}" \
+                    eval.rseed="${rseed}" \
+                    ablation.ablations_types="${ablated_components}" \
+                    ablation.ablations_layers_lst="${layer_spec}" \
+                    ablation.ablate_n_heads_per_layer="${n}" \
+                    ablation.head_selection_strategy="${head_selection_strategy}" \
+                && wait
 
-            echo ">>> Completed: layer=${layer}, heads=${n}, seed=${rseed}"
+                echo ">>> Completed: layer=${layer}, heads=${n}, seed=${rseed}"
+            done
         done
     done
-done
 
+else
+    echo "============================================"
+    echo "No ablation evaluation configuration provided"
+    echo "============================================"
+    echo "Running original evaluation"
+    for rseed in "${rseeds[@]}"; do
+        echo ">>> Running: seed=${rseed}"
+        echo "--------------------------------------------"
+        python scripts/run_ablations_gift-eval.py \
+            "${base_args[@]}" \
+            "${model_args[@]}" \
+            eval.rseed="${rseed}" \
+            ablation.head_selection_strategy="${head_selection_strategy}" \
+        && wait
+        echo ">>> Completed: seed=${rseed}"
+    done
+fi
 
 echo ""
 echo "============================================"

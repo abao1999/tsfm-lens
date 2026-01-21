@@ -32,6 +32,7 @@ dependencies = [
     "einops",
     "datasets",
     "pandas==2.0.0", # for gift-eval
+    "gluonts==0.15.1", # for gift-eval
 ]
 
 [dependency-groups]
