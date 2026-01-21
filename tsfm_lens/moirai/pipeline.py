@@ -1,15 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
-import warnings
-from typing import Sequence
-import sys
 
+import pandas as pd
 import torch
 from gluonts.dataset.common import ListDataset
-import pandas as pd
-
 from uni2ts.model.moirai import MoiraiForecast, MoiraiModule
 
 
@@ -128,7 +124,9 @@ class MoiraiPipelineCustom:
         # Align context length with the model expectation
         ctx_len = self.model.hparams.context_length
         if context.size(1) < ctx_len:
-            pad = torch.zeros(context.size(0), ctx_len - context.size(1), context.size(2), device=device, dtype=context.dtype)
+            pad = torch.zeros(
+                context.size(0), ctx_len - context.size(1), context.size(2), device=device, dtype=context.dtype
+            )
             context = torch.cat([pad, context], dim=1)
         elif context.size(1) > ctx_len:
             context = context[:, -ctx_len:, :]
