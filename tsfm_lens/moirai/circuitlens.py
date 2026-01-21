@@ -351,4 +351,3 @@ class CircuitLensMoirai(MoiraiPipelineCustom, BaseCircuitLens):
 
     def sample_tokens(self, residual: torch.Tensor, do_sample: bool = False) -> torch.Tensor:
         raise NotImplementedError("Moirai is not a token-generative model; call `predict` instead.")
-
