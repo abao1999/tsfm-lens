@@ -1,3 +1,7 @@
+"""
+TOTO predictor for GIFT-Eval evaluation.
+"""
+
 import gc
 import os
 from dataclasses import dataclass

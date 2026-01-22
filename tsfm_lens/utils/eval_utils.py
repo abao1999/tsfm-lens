@@ -2,6 +2,7 @@
 utils for evaluation scripts
 """
 
+import gc
 import json
 import logging
 import os
@@ -28,6 +29,102 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.cuda.manual_seed(seed)
     # transformers.set_seed(seed)
+
+
+def clear_cuda_cache(device: torch.device) -> None:
+    """
+    Clear the CUDA cache.
+    """
+    # Clear CUDA cache and load model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        with torch.cuda.device(device):
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+
+
+def reshape_batch_data(
+    data_list: list[np.ndarray],
+    num_datasets: int,
+    num_eval_windows: int,
+    dim: int,
+    target_shape: tuple[int, ...],
+) -> np.ndarray:
+    """
+    Reshape a list of batch data arrays with explicit dimension tracking.
+
+    Args:
+        data_list (List[np.ndarray]): List of arrays to concatenate and reshape.
+        num_datasets (int): Number of systems.
+        num_eval_windows (int): Number of evaluation windows per system.
+        dim (int): Number of dimensions in the data.
+        target_shape (Tuple[int, ...]): Shape of the target data (excluding system, window, and dim).
+
+    Returns:
+        np.ndarray: Reshaped array of shape (num_datasets * num_eval_windows, *target_shape, dim).
+
+    Notes:
+    - The original data is stored in memory as (num_samples, total_eval_windows, prediction_length) where total_eval_windows = num_datasets * num_eval_windows * dim
+    - The data is organized as [system1_window1_dim1, system1_window1_dim2, ..., system1_window2_dim1, ...] in memory
+    - Reshape behavior: reshape() only changes the view of the data without reordering elements in memory. It would incorrectly group the dimensions.
+    - Transpose behavior: transpose() reorders the dimensions in memory. It would correctly group the dimensions.
+    """
+    # Concatenate along the appropriate axis
+    concatenated = np.concatenate(data_list, axis=0 if len(data_list[0].shape) == 2 else 1)
+
+    # Reshape to separate dimensions: (num_datasets, num_eval_windows, dim, ...)
+    reshaped = concatenated.reshape(num_datasets, num_eval_windows, dim, *target_shape)
+
+    # Transpose to get desired order: (num_datasets, num_eval_windows, ..., dim)
+    transposed = reshaped.transpose(0, 1, *range(3, len(reshaped.shape)), 2)
+
+    # Reshape to final form: (num_datasets * num_eval_windows, ..., dim)
+    return transposed.reshape(num_datasets * num_eval_windows, *target_shape, dim)
+
+
+def validate_and_get_sample_count(
+    predictions: np.ndarray,
+    num_datasets: int,
+    num_eval_windows: int,
+    prediction_length: int,
+    dim: int,
+) -> int:
+    """
+    Validate the shape of the predictions array and return the number of samples after reduction.
+
+    Args:
+        predictions (np.ndarray): Predictions array, expected to be either 3D or 4D.
+        num_datasets (int): Number of systems.
+        num_eval_windows (int): Number of evaluation windows per system.
+        prediction_length (int): Number of timesteps in each prediction.
+        dim (int): Number of dimensions in the data.
+
+    Returns:
+        int: Actual number of samples after reduction.
+
+    Raises:
+        ValueError: If the predictions array does not have the expected shape.
+    """
+    if len(predictions.shape) == 4:
+        actual_num_samples = predictions.shape[0]
+        expected_shape = (
+            actual_num_samples,
+            num_datasets * num_eval_windows,
+            prediction_length,
+            dim,
+        )
+    elif len(predictions.shape) == 3:
+        actual_num_samples = 1
+        expected_shape = (num_datasets * num_eval_windows, prediction_length, dim)
+    else:
+        raise ValueError(f"Unexpected predictions shape after reduction: {predictions.shape}")
+
+    if predictions.shape != expected_shape:
+        raise ValueError(f"Predictions shape {predictions.shape} != expected {expected_shape}")
+
+    return actual_num_samples
 
 
 def calculate_rmse(

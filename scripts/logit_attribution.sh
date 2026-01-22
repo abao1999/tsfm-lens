@@ -22,7 +22,7 @@ echo "model_name: $model_name"
 python scripts/logit_attribution.py \
     chronos.model_id=${model_name} \
     chronos.deterministic=$use_deterministic \
-    chronos.num_samples=5 \
+    chronos.num_samples=20 \
     chronos.limit_prediction_length=false \
     chronos.context_length=512 \
     eval.prediction_length=512 \

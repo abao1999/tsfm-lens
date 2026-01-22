@@ -9,11 +9,10 @@ from functools import partial
 
 import hydra
 import torch
-from gluonts.transform import LastValueImputation
 
+from tsfm_lens.attribution import evaluate_attribution_with_full_outputs
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 from tsfm_lens.dataset import TestDataset
-from tsfm_lens.evaluation import evaluate_attribution_with_full_outputs
 from tsfm_lens.utils import (
     get_dim_from_dataset,
     get_eval_data_dict,
@@ -118,15 +117,12 @@ def main(cfg):
     test_datasets = {
         system_name: TestDataset(
             datasets=test_data_dict[system_name],
-            tokenizer=pipeline.tokenizer,
-            context_length=context_length,
-            prediction_length=cfg.eval.prediction_length,  # NOTE: should match the forecast prediction length
+            context_length=context_length,  # NOTE: not used when dataset is GiftEvalDataset, since gift-eval has pre-defined splits
+            prediction_length=cfg.eval.prediction_length,
             num_test_instances=cfg.eval.num_test_instances,
             window_style=cfg.eval.window_style,
             window_stride=cfg.eval.window_stride,
             window_start_time=cfg.eval.window_start_time,
-            model_type=cfg.chronos.model_type,
-            imputation_method=LastValueImputation() if cfg.chronos.model_type == "causal" else None,
             random_seed=cfg.eval.rseed,
         )
         for system_name in test_data_dict

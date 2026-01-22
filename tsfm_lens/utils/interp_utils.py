@@ -857,50 +857,87 @@ def diagnose_attention(
     }
 
 
-# Helper function to create combined corner plot
-def plot_combined_corner(
-    U_vectors: np.ndarray,
-    V_vectors: np.ndarray,
-    title: str,
-    num_svs: int = 6,
-    xlim: tuple[float, float] | None = None,
-    ylim: tuple[float, float] | None = None,
-    save_path: str | None = None,
-):
-    fig, axes = plt.subplots(num_svs, num_svs, figsize=(3 * num_svs, 3 * num_svs))
-    fig.suptitle(title, fontsize=16, fontweight="bold")
+def beam_search_from_fixed_logits(
+    logits: torch.Tensor,  # [B, S, T, V]
+    beam_size: int = 4,
+    eos_token_id: int | None = None,
+    length_penalty_alpha: float = 0.0,
+    return_topk: int = 1,
+    max_expand: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Beam search over fixed logits. Returns (tokens_best, scores_best).
+    tokens_best: [B, S, return_topk, T], scores_best: [B, S, return_topk]
+    """
+    B, S, T, V = logits.shape
+    K, Kret, device = beam_size, min(return_topk, beam_size), logits.device
+    NEG_INF = -1e30
 
-    for i in range(num_svs):
-        for j in range(num_svs):
-            ax = axes[i, j]
-            if i == j:
-                # Diagonal: histograms for both U and V
-                combined_data = np.concatenate([U_vectors[:, i], V_vectors[:, i]])
-                bins = np.linspace(combined_data.min(), combined_data.max(), 30 + 1)
-                ax.hist(
-                    U_vectors[:, i], bins=bins, color="tab:blue", alpha=0.5, histtype="stepfilled", label="U (Left SVs)"
-                )
-                ax.hist(
-                    V_vectors[:, i], bins=bins, color="tab:red", alpha=0.5, histtype="stepfilled", label="V (Right SVs)"
-                )
-                ax.set_title(f"SV {i + 1}", fontweight="bold")
-                ax.legend()
-            elif i > j:
-                # Lower triangle: left singular vectors (U)
-                ax.hist2d(U_vectors[:, j], U_vectors[:, i], bins=30, cmap="Blues")
-                if xlim is not None:
-                    ax.set_xlim(xlim)
-                if ylim is not None:
-                    ax.set_ylim(ylim)
-            else:
-                # Upper triangle: right singular vectors (V)
-                ax.hist2d(V_vectors[:, j], V_vectors[:, i], bins=30, cmap="Oranges")
-                if xlim is not None:
-                    ax.set_xlim(xlim)
-                if ylim is not None:
-                    ax.set_ylim(ylim)
+    logp = torch.log_softmax(logits, dim=-1)
+    tokens = torch.full((B, S, K, T), -1, dtype=torch.long, device=device)
+    scores = torch.full((B, S, K), NEG_INF, dtype=logp.dtype, device=device)
+    alive = torch.zeros((B, S, K), dtype=torch.bool, device=device)
 
-    # plt.subplots_adjust(top=0.92)
-    plt.tight_layout()
-    if save_path is not None:
-        plt.savefig(save_path, bbox_inches="tight")
+    # Helper: get top-k from step logprobs
+    def _step_topk(step_lp: torch.Tensor, k: int) -> tuple[torch.Tensor, torch.Tensor, int]:
+        if max_expand and max_expand < V:
+            vals, inds = torch.topk(step_lp, k=min(max_expand, k), dim=-1)
+            return vals, inds, vals.size(-1)
+        return step_lp, torch.arange(V, device=device).expand(B, S, V), V
+
+    # Initialize t=0
+    vals, inds, Veff = _step_topk(logp[:, :, 0], K)
+    k0 = min(K, Veff)
+    scores[:, :, :k0] = vals[:, :, :k0] if Veff <= K else torch.topk(vals, k0, dim=-1).values
+    if Veff <= K:
+        tokens[:, :, :k0, 0] = inds[:, :, :k0]
+        alive[:, :, :k0] = True if eos_token_id is None else (inds[:, :, :k0] != eos_token_id)
+    else:
+        top_vals, top_inds = torch.topk(vals, k0, dim=-1)
+        scores[:, :, :k0] = top_vals
+        tokens[:, :, :k0, 0] = torch.gather(inds, -1, top_inds)
+        alive[:, :, :k0] = True if eos_token_id is None else (tokens[:, :, :k0, 0] != eos_token_id)
+
+    BS = B * S
+    for t in range(1, T):
+        vals_t, inds_t, Veff = _step_topk(logp[:, :, t], V)
+
+        # Expand: [B,S,K,Veff]
+        scores_exp = scores.unsqueeze(-1) + vals_t.unsqueeze(-2)
+        scores_exp = scores_exp.masked_fill(~alive.unsqueeze(-1), NEG_INF)
+
+        # Select top-K across all candidates
+        topk_vals, topk_idx = torch.topk(scores_exp.view(BS, -1), K, dim=-1)
+        parent, tok_ix = topk_idx // Veff, topk_idx % Veff
+
+        # Gather tokens and update
+        inds_flat = inds_t.view(BS, -1)
+        next_tok = torch.gather(inds_flat, -1, tok_ix)
+        tokens_flat = tokens.view(BS, K, T)
+        new_tokens = torch.gather(tokens_flat, 1, parent.unsqueeze(-1).expand(-1, -1, T)).clone()
+        new_tokens[:, :, t] = next_tok
+
+        new_alive = torch.gather(alive.view(BS, K), 1, parent)
+        if eos_token_id is not None:
+            new_alive = new_alive & (next_tok != eos_token_id)
+
+        tokens, scores, alive = new_tokens.view(B, S, K, T), topk_vals.view(B, S, K), new_alive.view(B, S, K)
+
+        if eos_token_id is not None and not alive.any():
+            break
+
+    # Length penalty
+    if length_penalty_alpha > 0.0:
+        if eos_token_id is not None:
+            eos_mask = tokens == eos_token_id
+            idxs = torch.arange(T, device=device).view(1, 1, 1, T).expand_as(tokens)
+            eff_len = torch.where(eos_mask, idxs, T).min(dim=-1).values.clamp(min=1)
+        else:
+            eff_len = torch.full_like(scores, T, dtype=torch.long)
+        scores = scores / eff_len.to(scores.dtype).pow(length_penalty_alpha)
+
+    # Return top-k sequences
+    top_vals, top_idx = torch.topk(scores, Kret, dim=-1)
+    idx_expanded = top_idx.unsqueeze(-1).expand(-1, -1, -1, T)
+    tokens_best = torch.gather(tokens, 2, idx_expanded)
+    return tokens_best, top_vals

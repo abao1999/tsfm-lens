@@ -5,14 +5,13 @@ import pickle
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import spearmanr
 import torch
+from scipy.stats import spearmanr
 from tqdm import tqdm
 
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 
 # from chronos import ChronosPipeline
-from tsfm_lens.utils import make_ensemble_from_arrow_dir
 from tsfm_lens.utils.data_utils import load_dyst_samples
 
 WORK_DIR = os.getenv("WORK", "")
@@ -25,14 +24,14 @@ device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 # Function to find the indices of the top k highest induction scores
 def find_max_induction_score(induction_scores: torch.Tensor, k: int | None = None) -> list[tuple[int, int]]:
     """
-    Find the indices of the top k highest induction scores in the matrix.
+        Find the indices of the top k highest induction scores in the matrix.
 
-    Args:
-        induction_scores: torch tensor of induction scores
-        k: number of top scores to return
-w
-    Returns:
-        List of (layer, head) tuples corresponding to the top k induction scores
+        Args:
+            induction_scores: torch tensor of induction scores
+            k: number of top scores to return
+    w
+        Returns:
+            List of (layer, head) tuples corresponding to the top k induction scores
     """
     # Flatten the tensor to find the top k values
     flattened = induction_scores.flatten()
@@ -260,11 +259,9 @@ def load_rrt_induction_scores(
 
     if not os.path.exists(center_path) or not os.path.exists(right_path):
         raise FileNotFoundError(
-            (
-                "Missing RRT induction score files. Expected at:\n"
-                f"  {center_path}\n  {right_path}\n"
-                "Run scripts/rrt_induction_scores.py to generate them for the desired configs."
-            )
+            "Missing RRT induction score files. Expected at:\n"
+            f"  {center_path}\n  {right_path}\n"
+            "Run scripts/rrt_induction_scores.py to generate them for the desired configs."
         )
 
     with open(center_path, "rb") as f:
@@ -448,23 +445,23 @@ def main(cfg):
         for system_config in cfg.induction_ablation.systems:
             system_name = system_config.name
             print(f"\n{'=' * 60}\nProcessing system: {system_name}\n{'=' * 60}")
-            
+
             # Load system data
             dyst_coords = load_dyst_samples(system_name, split_dir, one_dim_target=False, num_samples=1)
             dyst_coords = torch.tensor(dyst_coords[sample_idx, selected_dim, :]).unsqueeze(0)
-            
+
             for start_time in system_config.start_times:
                 print(f"\n{'-' * 50}\nProcessing start time: {start_time}\n{'-' * 50}")
-                
+
                 context_start_time = start_time
                 context_end_time = context_start_time + context_length
-                
+
                 # Prepare input series for this start time
                 context = dyst_coords[:, context_start_time:context_end_time]
                 future_vals = dyst_coords[:, context_end_time : context_end_time + prediction_length]
-                
+
                 print(f"Context shape: {context.shape}, Future values shape: {future_vals.shape}")
-                
+
                 # Get ground truth data
                 ground_truth = future_vals[0]
 
@@ -500,7 +497,7 @@ def main(cfg):
                     # Iterate over attention types
                     for attention_type in cfg.induction_ablation.attention_types:
                         print(f"\n{'-' * 30}\nProcessing attention type: {attention_type}\n{'-' * 30}")
-                        
+
                         # Store results for each ablation level and method
                         ablation_predictions = {}
                         ablation_rmse_values = {}
@@ -551,7 +548,9 @@ def main(cfg):
                                 title_prefix=f"{readable_model_name} {induction_config} {system_name} t{start_time} {attention_type}",
                             )
 
-                        print(f"Completed all experiments for {readable_model_name} with {induction_config} configuration, {system_name} system, start time {start_time}, and {attention_type} attention type.")
+                        print(
+                            f"Completed all experiments for {readable_model_name} with {induction_config} configuration, {system_name} system, start time {start_time}, and {attention_type} attention type."
+                        )
 
 
 if __name__ == "__main__":

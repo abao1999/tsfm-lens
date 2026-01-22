@@ -4,10 +4,11 @@ Configuration is managed via Hydra config files.
 """
 
 import csv
-import gc
 import json
 import logging
 import os
+from itertools import groupby
+from typing import Literal
 
 import hydra
 import numpy as np
@@ -39,10 +40,11 @@ from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 from tsfm_lens.chronos_bolt.circuitlens import CircuitLensBolt
 from tsfm_lens.circuitlens import BaseCircuitLens
 from tsfm_lens.dataset import GiftEvalDataset
+from tsfm_lens.moirai.circuitlens import CircuitLensMoirai
 from tsfm_lens.timesfm.circuitlens import CircuitLensTimesFM
 from tsfm_lens.toto.circuitlens import CircuitLensToto
 from tsfm_lens.toto.predictor import EvalTask, toto_evaluate_tasks
-from tsfm_lens.utils import set_seed
+from tsfm_lens.utils import clear_cuda_cache, set_seed
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
 DATASET_PROPERTIES_PATH = os.path.join(ASSETS_DIR, "dataset_properties.json")
@@ -132,6 +134,11 @@ def load_model(
     torch_dtype = torch_dtype or getattr(torch, cfg.eval.torch_dtype) or torch.float32
     assert isinstance(torch_dtype, torch.dtype)
     logger.info(f"Using device: {device}, torch_dtype: {torch_dtype}")
+    # NOTE: we follow the settings of the Gift-Eval example notebooks and of each model's github demo
+    # TimesFM 2.5 max context length is set to 2048 (see TimesFMPipelineCustom constructor)
+    # Chronos and Chronos Bolt max context length is default 512 (see the Chronos offical repo)
+    # Toto max context length is set to 4096 (see tsfm_lens/toto/predictor.py and toto offical repo)
+    # Moirai max context length is set to 4000 here explicitly, following their Gift-Eval convention
     loaders = {
         "timesfm": lambda: CircuitLensTimesFM(cfg.timesfm.model_id, device_map=device_map),
         "chronos": lambda: CircuitLensChronos.from_pretrained(
@@ -141,7 +148,18 @@ def load_model(
             cfg.chronos_bolt.model_id, device_map=device_map, torch_dtype=torch_dtype
         ),
         "toto": lambda: CircuitLensToto(cfg.toto.model_id, device_map=device_map),
+        "moirai": lambda: CircuitLensMoirai(
+            cfg.moirai.model_id,
+            context_length=4000,
+            prediction_length=1,  # NOTE: this is arbitrary, just a placeholder
+            patch_size=cfg.moirai.patch_size,  # NOTE: try "auto". This can also be replaced in .predict() method
+            num_samples=cfg.moirai.num_samples,  # NOTE: this is a placeholder, can be replaced in .predict() method
+            target_dim=1,
+            device=device_map,
+        ),
     }
+    # logger.info the model type's config
+    logger.info(f"Using {model_type} config: {dict(cfg)[model_type]}")
     if model_type not in loaders:
         raise ValueError(f"Invalid model type: {model_type}")
     pipeline = loaders[model_type]()
@@ -150,7 +168,14 @@ def load_model(
     return pipeline
 
 
-def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
+def setup_ablations_by_strategy(
+    pipeline: BaseCircuitLens,
+    ablations_layers_lst: list[int] | None,
+    ablations_types: list[Literal["head", "mlp"]],
+    ablate_n_heads_per_layer: int | None,
+    head_selection_strategy: str,
+    rseed: int,
+) -> str | None:
     """
     Configure ablation hooks on the model pipeline based on the specified strategy.
 
@@ -160,17 +185,16 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
 
     Args:
         pipeline: The CircuitLens model pipeline to configure ablations on.
-        cfg: Hydra config containing ablation settings:
-            - cfg.ablation.ablations_layers_lst: List of layer indices to ablate (None to skip)
-            - cfg.ablation.ablations_types: List of component types to ablate (e.g., ["head"])
-            - cfg.ablation.ablate_n_heads_per_layer: Number of heads to ablate per layer (None for all)
-            - cfg.ablation.head_selection_strategy: One of:
-                - "random": Random head selection (seeded by cfg.eval.rseed)
-                - "srank": Select heads with lowest stable rank (least important)
-                - "srank_reverse": Select heads with highest srank (most important)
-                - "alignment": Select heads with highest alignment scores
-                - "alignment_reverse": Select heads with lowest alignment scores
-            - cfg.eval.rseed: Random seed for reproducible random selection
+        ablations_layers_lst: List of layer indices to ablate (None to skip ablations).
+        ablations_types: List of component types to ablate (e.g., ["head"]).
+        ablate_n_heads_per_layer: Number of heads to ablate per layer (None for all).
+        head_selection_strategy: One of:
+            - "random": Random head selection (seeded by rseed)
+            - "srank": Select heads with lowest stable rank (least important)
+            - "srank_reverse": Select heads with highest srank (most important)
+            - "alignment": Select heads with highest alignment scores
+            - "alignment_reverse": Select heads with lowest alignment scores
+        rseed: Random seed for reproducible random selection.
 
     Returns:
         A string describing the ablation configuration (e.g., "head_layers_1-2_heads-10"),
@@ -179,14 +203,13 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
     Raises:
         ValueError: If the required ranking file is not found for srank/alignment strategies.
     """
-    if cfg.ablation.ablations_layers_lst is None:
+    if ablations_layers_lst is None:
         logger.info("No ablations configured")
         return None
 
-    ablations_types = cfg.ablation.ablations_types
-    layers = cfg.ablation.ablations_layers_lst
-    n_heads = cfg.ablation.ablate_n_heads_per_layer
-    strategy = cfg.ablation.head_selection_strategy
+    layers = ablations_layers_lst
+    n_heads = ablate_n_heads_per_layer
+    strategy = head_selection_strategy
 
     logger.info(f"Ablations: types={ablations_types}, layers={layers}, n_heads={n_heads}, strategy={strategy}")
 
@@ -196,8 +219,8 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
 
     # Select heads based on strategy
     if strategy == "random":
-        rng = np.random.default_rng(cfg.eval.rseed)
-        logger.info(f"Selecting heads randomly with seed {cfg.eval.rseed}")
+        rng = np.random.default_rng(rseed)
+        logger.info(f"Selecting heads randomly with seed {rseed}")
         if n_heads is None:
             heads_to_ablate = [(layer, h) for layer in layers for h in range(pipeline.num_heads)]
         else:
@@ -205,7 +228,7 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
             for layer in layers:
                 selected = rng.choice(pipeline.num_heads, size=n_heads, replace=False)
                 heads_to_ablate.extend((layer, h) for h in selected)
-    else:
+    elif strategy in ["srank", "srank_reverse", "alignment", "alignment_reverse"]:
         # Load ranking file (srank or alignment)
         ranking_type = "srank" if "srank" in strategy else "alignment"
         ranking_path = os.path.join(
@@ -226,8 +249,10 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
             if reverse:
                 head_list = head_list[::-1]
             heads_to_ablate.extend((int(layer), int(h)) for h in head_list[:n_heads])
+    else:
+        raise ValueError(f"Invalid strategy: {strategy}")
 
-    logger.info(f"Ablating heads: {heads_to_ablate}")
+    logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
     pipeline.add_ablation_hooks_explicit(
         ablations_types=ablations_types,
         layers_to_ablate_mlp=layers,
@@ -235,6 +260,122 @@ def setup_ablations(pipeline: BaseCircuitLens, cfg: DictConfig) -> str | None:
     )
 
     return f"{'-'.join(ablations_types)}_layers_{'-'.join(map(str, layers))}_heads-{n_heads or 'all'}"
+
+
+def _get_ablations_summary_str(pipeline: BaseCircuitLens, heads_to_ablate: list[tuple[int, int]]) -> str:
+    n_heads_ablated = len(heads_to_ablate)
+    logger.info(f"{n_heads_ablated} heads_to_ablate")
+
+    ablations_summary_str = f"ablate_{n_heads_ablated}_heads"
+
+    model_class = pipeline.__class__.__name__
+    is_chronos = model_class in ["CircuitLensChronos", "CircuitLensBolt"]
+    if is_chronos:
+        # NOTE: sa_head_ablation_handles should be the same as ca_head_ablation_handles
+        layers_without_heads = list(pipeline.sa_head_ablation_handles.keys())  # type: ignore
+        assert layers_without_heads == list(pipeline.ca_head_ablation_handles.keys())  # type: ignore
+        layers_without_mlps = list(pipeline.mlp_ablation_handles.keys())  # type: ignore
+    else:
+        layers_without_heads = list(pipeline.head_ablation_handles.keys())  # type: ignore
+        layers_without_mlps = list(pipeline.mlp_ablation_handles.keys())  # type: ignore
+
+    ablations_summary_str_suffix = ""
+    if layers_without_heads and layers_without_mlps:
+        ablations_summary_str_suffix = f"za_heads_layers_{'-'.join(map(str, layers_without_heads))}-mlps_layers_{'-'.join(map(str, layers_without_mlps))}"
+    elif layers_without_heads:
+        ablations_summary_str_suffix = f"za_heads_layers_{'-'.join(map(str, layers_without_heads))}"
+    elif layers_without_mlps:
+        ablations_summary_str_suffix = f"za_mlps_layers_{'-'.join(map(str, layers_without_mlps))}"
+    else:
+        ablations_summary_str_suffix = ""
+
+    if ablations_summary_str_suffix:
+        ablations_summary_str += "_" + ablations_summary_str_suffix
+
+    return ablations_summary_str
+
+
+def setup_ablations_to_heads_at_1pp(
+    pipeline: BaseCircuitLens,
+    chosen_layers: list[int],
+    num_heads_per_layer_to_skip: int,
+    layers_to_keep_at_heads1pp: list[int],
+    chosen_layers_mlp: list[int],
+) -> str | None:
+    """
+    Configure ablations to bring heads to 1 principal component (1pp) performance.
+
+    Loads precomputed head ablation configurations from a JSON file and applies them
+    to the pipeline. The ablation list is filtered to only include the specified layers,
+    then for each layer, the last `num_heads_per_layer_to_skip` heads are removed from
+    ablation (i.e., kept active) unless the layer is in `layers_to_keep_at_heads1pp`.
+
+    Args:
+        pipeline: The CircuitLens model pipeline to configure ablations on.
+        chosen_layers: List of layer indices to include in the ablation.
+        num_heads_per_layer_to_skip: Number of heads to skip (keep active) per layer.
+            If 0, all chosen layers are treated as layers to keep at heads1pp.
+        layers_to_keep_at_heads1pp: Layers where all heads from the JSON config should
+            be ablated (no heads skipped).
+        chosen_layers_mlp: List of layer indices for MLP ablation.
+
+    Returns:
+        A string summarizing the ablation configuration (e.g., "heads1pp_ablate_N_heads_..."),
+        or None if no ablations are configured.
+
+    Note:
+        The JSON file contains [layer, head] pairs specifying which heads to ablate.
+        Heads are grouped by layer and sorted, then the last `num_heads_per_layer_to_skip`
+        heads are removed from each layer's ablation list (except for protected layers).
+    """
+    heads_to_ablate = json.load(
+        open(os.path.join(ASSETS_DIR, f"{pipeline.__class__.__name__}_ablate_for_heads_at_1pp.json"))
+    )
+    heads_to_ablate = [config for config in heads_to_ablate if config[0] in chosen_layers]
+    if num_heads_per_layer_to_skip == 0:
+        layers_to_keep_at_heads1pp = chosen_layers
+
+    heads_to_ablate = [
+        config
+        for layer, group in groupby(sorted(heads_to_ablate, key=lambda x: x[0]), key=lambda x: x[0])
+        for config in (
+            list(group) if layer in layers_to_keep_at_heads1pp else list(group)[:-num_heads_per_layer_to_skip]
+        )
+    ]
+
+    logger.info(f"Ablating {len(heads_to_ablate)} heads")
+
+    pipeline.remove_all_hooks()
+    if hasattr(pipeline, "reset_attribution_inputs_and_outputs"):
+        pipeline.reset_attribution_inputs_and_outputs()
+
+    logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
+    pipeline.add_ablation_hooks_explicit(
+        ablations_types=["head", "mlp"],
+        layers_to_ablate_mlp=chosen_layers_mlp,
+        heads_to_ablate=heads_to_ablate,
+    )
+
+    for layer in chosen_layers:
+        num_heads = sum(1 for config in heads_to_ablate if config[0] == layer)
+        logger.info(f"Layer {layer}: {num_heads} heads")
+
+    ablations_summary_str = _get_ablations_summary_str(pipeline, heads_to_ablate)
+    logger.info(f"Ablations summary string: {ablations_summary_str}")
+
+    # We keep track of the additional flexibility to the heads@1pp ablation
+    extra_suffix = ""
+    if num_heads_per_layer_to_skip > 0 and len(chosen_layers) > 0:
+        logger.info(
+            f"Additional flexibility to the heads@1pp ablation: num_heads_per_layer_to_skip={num_heads_per_layer_to_skip}, layers_to_keep_at_heads1pp={'-'.join(map(str, layers_to_keep_at_heads1pp))}"
+        )
+        extra_suffix = f"_num_heads_per_layer_to_skip-{num_heads_per_layer_to_skip}"
+        if layers_to_keep_at_heads1pp:
+            extra_suffix += f"_layers_to_keep_at_heads1pp-{'-'.join(map(str, layers_to_keep_at_heads1pp))}"
+    ablations_summary_str += extra_suffix
+    logger.info(f"Ablations summary string with extra suffix: {ablations_summary_str}")
+
+    return f"heads1pp_{ablations_summary_str}"
 
 
 class ChronosPredictor:
@@ -346,7 +487,7 @@ def run_toto_evaluation(
 
 def run_standard_evaluation(
     pipeline: BaseCircuitLens,
-    model_type: str,
+    model_type: Literal["timesfm", "chronos", "chronos_bolt", "moirai"],
     cfg: DictConfig,
     selected_dataset_names: list[str],
     selected_term: str,
@@ -354,9 +495,10 @@ def run_standard_evaluation(
     dataset_properties_map: dict[str, dict],
     csv_path: str,
     row_header: list[str],
+    batch_size: int = 1024,
 ):
     """
-    Run evaluation pipeline for TimesFM, Chronos, and Chronos-Bolt models.
+    Run evaluation pipeline for TimesFM, Chronos, Chronos-Bolt, and Moirai models.
 
     Iterates over selected datasets and terms, creates forecasts using the
     appropriate predictor, computes evaluation metrics, and writes results
@@ -364,7 +506,7 @@ def run_standard_evaluation(
 
     Args:
         pipeline: The CircuitLens model pipeline to use for predictions.
-        model_type: Model identifier ("timesfm", "chronos", or "chronos_bolt").
+        model_type: Model identifier ("timesfm", "chronos", or "chronos_bolt", "moirai").
         cfg: Hydra config containing evaluation settings (data_dir, rseed, etc.).
         selected_dataset_names: List of GIFT-Eval dataset names to evaluate.
         selected_term: Forecast horizon term filter ("short", "medium", "long", "all").
@@ -378,6 +520,7 @@ def run_standard_evaluation(
         data loss if evaluation is interrupted. Multivariate datasets are
         automatically converted to univariate if needed.
     """
+    logger.info(f"Running standard evaluation with batch size: {batch_size}")
     with open(csv_path, "w", newline="") as f:
         csv.writer(f).writerow(row_header)
 
@@ -385,32 +528,53 @@ def run_standard_evaluation(
         for term in get_dataset_terms(ds_name, selected_term, medium_long_datasets):
             ds_key, ds_freq = parse_dataset_key(ds_name, dataset_properties_map)
 
-            # Check if univariate conversion needed
             to_univariate = cfg.eval.gift_eval.to_univariate
-            if not to_univariate:
-                to_univariate = (
-                    GiftEvalDataset(name=ds_name, term=term, to_univariate=False, data_dir=cfg.eval.data_dir).target_dim
-                    != 1
-                )
+
+            if model_type not in ["moirai", "moirai2"]:
+                # NOTE: since Moirai supports multivariate time series forecast, there is no need to convert the original data into univariate
+                # Check if univariate conversion needed
+                if not to_univariate:
+                    to_univariate = (
+                        GiftEvalDataset(
+                            name=ds_name, term=term, to_univariate=False, data_dir=cfg.eval.data_dir
+                        ).target_dim
+                        != 1
+                    )
 
             dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=to_univariate, data_dir=cfg.eval.data_dir)
 
             # Create predictor
             if model_type == "timesfm":
                 predictor = TimesFmPredictor(pipeline.model, dataset.prediction_length, cfg.eval.rseed)
+            elif model_type in ["chronos", "chronos_bolt"]:
+                predictor = ChronosPredictor(
+                    pipeline, dataset.prediction_length, num_samples=cfg.chronos.num_samples, rseed=cfg.eval.rseed
+                )
+            elif model_type == "moirai":
+                # set the Moirai hyperparameter according to each dataset, then create the predictor
+                pipeline.model.hparams.prediction_length = dataset.prediction_length
+                pipeline.model.hparams.target_dim = dataset.target_dim
+                pipeline.model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
+
+                predictor = pipeline.model.create_predictor(
+                    batch_size=512, device=pipeline.model.device
+                )  # NOTE: this is hardcoded following the Moirai Gift-Eval example notebook
+
+            elif model_type == "toto":
+                raise ValueError("Use run_toto_evaluation() for Toto models")
             else:
-                predictor = ChronosPredictor(pipeline, dataset.prediction_length, rseed=cfg.eval.rseed)
+                raise NotImplementedError(f"Predictor not implemented for model type: {model_type}")
 
             # Evaluate
             res = evaluate_model(
                 predictor,  # type: ignore[arg-type]
                 test_data=dataset.test_data,
                 metrics=METRICS,
-                batch_size=1024,
+                batch_size=batch_size,  # default batch size is 1024
                 axis=None,
                 mask_invalid_label=True,
                 allow_nan_forecast=False,
-                seasonality=get_seasonality(dataset.freq),
+                seasonality=get_seasonality(dataset.freq),  # season length
             )
 
             # Build result row
@@ -455,33 +619,61 @@ def main(cfg):
         dataset_properties_map = json.load(f)
 
     # Clear CUDA cache and load model
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        with torch.cuda.device(device):
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            torch.cuda.reset_peak_memory_stats()
+    clear_cuda_cache(device)
 
     pipeline = load_model(cfg.ablation.model_type, cfg, device=device, torch_dtype=torch_dtype)
-    ablations_name = setup_ablations(pipeline, cfg)
+
+    head_selection_strategy = cfg.ablation.head_selection_strategy
+
+    # NOTE: setup_ablations* modifies the pipeline in-place by adding the ablations hooks
+    ablations_name = None
+    output_subdir_name = "original"
+    if head_selection_strategy is None:
+        logger.info("Skipping ablations")
+        pass
+    elif head_selection_strategy == "heads1pp":
+        logger.info("Ablating to heads@1pp")
+        ablations_name = setup_ablations_to_heads_at_1pp(
+            pipeline,
+            chosen_layers=cfg.ablation.to_heads_at_1pp.chosen_layers,
+            num_heads_per_layer_to_skip=cfg.ablation.to_heads_at_1pp.num_heads_per_layer_to_skip,
+            layers_to_keep_at_heads1pp=cfg.ablation.to_heads_at_1pp.layers_to_keep_at_heads1pp,
+            chosen_layers_mlp=cfg.ablation.to_heads_at_1pp.chosen_layers_mlp,
+        )
+        output_subdir_name = f"heads1pp_rseed-{cfg.eval.rseed}"
+
+    elif head_selection_strategy in ["random", "srank", "srank_reverse", "alignment", "alignment_reverse"]:
+        logger.info(f"Ablating by {head_selection_strategy}")
+        ablations_name = setup_ablations_by_strategy(
+            pipeline,
+            ablations_layers_lst=cfg.ablation.ablations_layers_lst,
+            ablations_types=cfg.ablation.ablations_types,
+            ablate_n_heads_per_layer=cfg.ablation.ablate_n_heads_per_layer,
+            head_selection_strategy=head_selection_strategy,
+            rseed=cfg.eval.rseed,
+        )
+        # Output paths
+        if not cfg.ablation.model_name_str:
+            raise ValueError("model_name_str is required")
+
+        strategy_prefix = {s: f"{s}_" for s in ["alignment", "alignment_reverse", "srank", "srank_reverse", "random"]}
+        output_subdir_name = f"{strategy_prefix[head_selection_strategy]}rseed-{cfg.eval.rseed}"
+    else:
+        raise ValueError(f"Invalid head selection strategy: {head_selection_strategy}")
+
+    # directory to save results into
+    output_dir = os.path.join(
+        cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
+        cfg.ablation.model_name_str,
+        output_subdir_name,
+    )
+    logger.info(f"Results will be saved to: {output_dir}")
 
     # Suppress GluonTS warning
     logging.getLogger("gluonts.model.forecast").addFilter(
         type("Filter", (logging.Filter,), {"filter": lambda s, r: "mean prediction" not in r.getMessage().lower()})()
     )
 
-    # Output paths
-    if not cfg.ablation.model_name_str:
-        raise ValueError("model_name_str is required")
-
-    strategy_prefix = {s: f"{s}_" for s in ["alignment", "alignment_reverse", "srank", "srank_reverse", "random"]}
-
-    output_dir = os.path.join(
-        cfg.eval.results_save_dir or DEFAULT_RESULTS_SAVE_DIR,
-        cfg.ablation.model_name_str,
-        f"{strategy_prefix[cfg.ablation.head_selection_strategy]}rseed-{cfg.eval.rseed}",
-    )
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join(output_dir, f"{ablations_name or 'original'}_{gift_cfg.term}_results.csv")
     logger.info(f"Results: {csv_path}")
@@ -512,6 +704,7 @@ def main(cfg):
             dataset_properties_map,
             csv_path,
             row_header,
+            batch_size=cfg.eval.batch_size,
         )
 
     logger.info(f"\nFinal results: {csv_path}")

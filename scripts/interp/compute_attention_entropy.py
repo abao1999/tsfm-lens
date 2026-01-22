@@ -14,7 +14,6 @@ import gc
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List
 
 import hydra
 import matplotlib.pyplot as plt
@@ -24,9 +23,9 @@ from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, OmegaConf
 from tqdm.auto import tqdm
 
-from tsfm_lens.dataset import TestDataset
-from tsfm_lens.utils import apply_custom_style, set_seed, get_eval_data_dict
 from scripts.entropic_rank_head_outputs import instantiate_pipeline
+from tsfm_lens.dataset import TestDataset
+from tsfm_lens.utils import apply_custom_style, get_eval_data_dict, set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +92,7 @@ def compute_average_entropy(attention_tensor: np.ndarray, eps: float = 1e-12) ->
     return entropy.mean(axis=0)  # [L, H]
 
 
-
-def build_datasets(cfg: DictConfig) -> Dict[str, TestDataset]:
+def build_datasets(cfg: DictConfig) -> dict[str, TestDataset]:
     cfg_model = cfg.attention_entropy
     eval_sets = get_eval_data_dict(
         cfg_model.data_dir,
@@ -103,7 +101,7 @@ def build_datasets(cfg: DictConfig) -> Dict[str, TestDataset]:
         subdir_names=cfg_model.system_names,
     )
 
-    datasets: Dict[str, TestDataset] = {}
+    datasets: dict[str, TestDataset] = {}
     for system_name, gluonts_datasets in eval_sets.items():
         datasets[system_name] = TestDataset(
             datasets=gluonts_datasets,
@@ -136,7 +134,7 @@ def plot_entropy_heatmap(avg_entropy: np.ndarray, save_path: Path) -> None:
 def process_model(
     model_name: str,
     cfg: DictConfig,
-    datasets: Dict[str, TestDataset],
+    datasets: dict[str, TestDataset],
     save_dir: Path,
     device: torch.device,
     torch_dtype: torch.dtype,
@@ -156,9 +154,9 @@ def process_model(
     num_samples = cfg_model.num_samples
     deterministic = cfg_model.deterministic
 
-    window_metadata: List[Dict[str, int]] = []
+    window_metadata: list[dict[str, int]] = []
     entropy_sum = np.zeros((num_layers, num_heads), dtype=np.float64)
-    window_entropies: List[np.ndarray] = []
+    window_entropies: list[np.ndarray] = []
     processed_windows = 0
 
     with torch.inference_mode():

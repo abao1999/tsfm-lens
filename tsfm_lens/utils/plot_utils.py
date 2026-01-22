@@ -1404,3 +1404,52 @@ def plot_ablation_box_plot(
         print(f"Saved box plot to: {save_path}")
 
     plt.show()
+
+
+# Helper function to create combined corner plot
+def plot_combined_corner(
+    U_vectors: np.ndarray,
+    V_vectors: np.ndarray,
+    title: str,
+    num_svs: int = 6,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    save_path: str | None = None,
+):
+    fig, axes = plt.subplots(num_svs, num_svs, figsize=(3 * num_svs, 3 * num_svs))
+    fig.suptitle(title, fontsize=16, fontweight="bold")
+
+    for i in range(num_svs):
+        for j in range(num_svs):
+            ax = axes[i, j]
+            if i == j:
+                # Diagonal: histograms for both U and V
+                combined_data = np.concatenate([U_vectors[:, i], V_vectors[:, i]])
+                bins = np.linspace(combined_data.min(), combined_data.max(), 30 + 1)
+                ax.hist(
+                    U_vectors[:, i], bins=bins, color="tab:blue", alpha=0.5, histtype="stepfilled", label="U (Left SVs)"
+                )
+                ax.hist(
+                    V_vectors[:, i], bins=bins, color="tab:red", alpha=0.5, histtype="stepfilled", label="V (Right SVs)"
+                )
+                ax.set_title(f"SV {i + 1}", fontweight="bold")
+                ax.legend()
+            elif i > j:
+                # Lower triangle: left singular vectors (U)
+                ax.hist2d(U_vectors[:, j], U_vectors[:, i], bins=30, cmap="Blues")
+                if xlim is not None:
+                    ax.set_xlim(xlim)
+                if ylim is not None:
+                    ax.set_ylim(ylim)
+            else:
+                # Upper triangle: right singular vectors (V)
+                ax.hist2d(V_vectors[:, j], V_vectors[:, i], bins=30, cmap="Oranges")
+                if xlim is not None:
+                    ax.set_xlim(xlim)
+                if ylim is not None:
+                    ax.set_ylim(ylim)
+
+    # plt.subplots_adjust(top=0.92)
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches="tight")

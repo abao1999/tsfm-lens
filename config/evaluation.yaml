@@ -5,7 +5,7 @@ eval:
   device: cuda:0
   torch_dtype: bfloat16
 
-  batch_size: 128
+  batch_size: 1024
 
   prediction_length: 512
 
