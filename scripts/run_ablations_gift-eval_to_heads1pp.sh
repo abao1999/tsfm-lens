@@ -57,17 +57,20 @@ head_selection_strategy="null"
 
 model_type="chronos_bolt"
 
-chosen_layers=($(seq 1 8))
+chosen_layers=($(seq 1 4))
+# chosen_layers=($(seq 1 8))
 # chosen_layers=($(seq 2 5))
 # chosen_layers=(7 8 9 10 11 12 13)
 echo "chosen_layers: ${chosen_layers[*]}"
 # chosen_layers_mlp=($(seq 3 8))
 # chosen_layers_mlp=($(seq 2 6))
 # chosen_layers_mlp=($(seq 1 4))
-chosen_layers_mlp=($(seq 3 6))
+# chosen_layers_mlp=($(seq 3 6))
+# chosen_layers_mlp=($(seq 1 6))
+chosen_layers_mlp=($(seq 1 6))
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
-num_heads_per_layer_to_skip=2
+num_heads_per_layer_to_skip=0
 echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
 # layers_to_keep_at_heads1pp=()
 # layers_to_keep_at_heads1pp=($(seq 1 5))
