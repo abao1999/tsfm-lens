@@ -29,16 +29,17 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=1
+gpu_index=3
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
-batch_size=128
+batch_size=512
 
 # Ablation grid parameters (bash arrays)
 rseeds=(42)
 ablated_components="[head]"
 
+# TODO: use ablated_components as the switch instead i.e. ablated_components == "null" means do original evaluation
 head_selection_strategy="null" # "null" to disable ablations
 
 model_type="moirai"
@@ -64,7 +65,7 @@ declare -A model_names=(
     ["chronos_bolt"]="amazon/chronos-bolt-base"
     ["chronos"]="amazon/chronos-t5-base"
     ["toto"]="Datadog/Toto-Open-Base-1.0"
-    ["moirai"]="Salesforce/moirai-1.1-R-base"
+    ["moirai"]="Salesforce/moirai-1.1-R-small"
 )
 
 model_name="${model_names[$model_type]}"

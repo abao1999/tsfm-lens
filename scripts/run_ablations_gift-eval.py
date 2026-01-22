@@ -557,7 +557,7 @@ def run_standard_evaluation(
                 pipeline.model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
 
                 predictor = pipeline.model.create_predictor(
-                    batch_size=512
+                    batch_size=512, device=pipeline.model.device
                 )  # NOTE: this is hardcoded following the Moirai Gift-Eval example notebook
 
             elif model_type == "toto":
