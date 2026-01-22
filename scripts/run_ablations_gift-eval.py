@@ -520,6 +520,7 @@ def run_standard_evaluation(
         data loss if evaluation is interrupted. Multivariate datasets are
         automatically converted to univariate if needed.
     """
+    logger.info(f"Running standard evaluation with batch size: {batch_size}")
     with open(csv_path, "w", newline="") as f:
         csv.writer(f).writerow(row_header)
 
@@ -555,7 +556,9 @@ def run_standard_evaluation(
                 pipeline.model.hparams.target_dim = dataset.target_dim
                 pipeline.model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
 
-                predictor = pipeline.model.create_predictor(batch_size=512)
+                predictor = pipeline.model.create_predictor(
+                    batch_size=512
+                )  # NOTE: this is hardcoded following the Moirai Gift-Eval example notebook
 
             elif model_type == "toto":
                 raise ValueError("Use run_toto_evaluation() for Toto models")
@@ -701,6 +704,7 @@ def main(cfg):
             dataset_properties_map,
             csv_path,
             row_header,
+            batch_size=cfg.eval.batch_size,
         )
 
     logger.info(f"\nFinal results: {csv_path}")

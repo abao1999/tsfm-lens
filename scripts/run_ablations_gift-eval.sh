@@ -33,6 +33,7 @@ gpu_index=1
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
+batch_size=128
 
 # Ablation grid parameters (bash arrays)
 rseeds=(42)
@@ -103,9 +104,11 @@ base_args=(
     eval.gift_eval.to_univariate=false
     eval.device="cuda:${gpu_index}"
     eval.results_save_dir="${HOME}/tsfm-lens/results"
+    eval.batch_size="${batch_size}"
     ablation.model_name_str="${model_name_str}"
     ablation.model_type="${model_type}"
 )
+echo "base_args: ${base_args[*]}"
 
 # =============================================================================
 # RUN ABLATION GRID
