@@ -16,7 +16,10 @@ Step 2:
 Step 3:
 `uv pip install -e .[tsfms]`
 
-Crucially, we benchmark on `Gift-Eval`, which requires `pandas==2.0.0`.
+Step 4:
+`uv pip install gluonts==0.15.1`
+
+Crucially, we benchmark on `Gift-Eval`, which requires `pandas==2.0.0` and also `gluonts==0.15.1`. The latter requirement gets over-ridden when installing Moirai (uni2ts) from the tsfms group. For this reason, Step 4 is crucial, for running the ablation evaluation on gift-eval.
 
 To fetch and initialize the timesfm submodule:
 ```

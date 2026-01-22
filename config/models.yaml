@@ -51,3 +51,12 @@ toto:
   samples_per_batch: 20
   use_kv_cache: true
   pad_short_series: false
+
+moirai:
+
+  model_id: Salesforce/moirai-1.1-R-base
+  context_length: 4000
+  prediction_length: 1
+  patch_size: 32
+  num_samples: 100
+  target_dim: 1

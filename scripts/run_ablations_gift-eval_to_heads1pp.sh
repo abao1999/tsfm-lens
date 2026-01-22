@@ -30,7 +30,7 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=3
+gpu_index=1
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
@@ -39,7 +39,7 @@ data_dir="${WORK}/data/gift-eval"
 rseeds=(42)
 ablated_components="[head,mlp]"
 
-head_selection_strategy="null"
+head_selection_strategy="heads1pp"
 
 # model_type="timesfm"
 
