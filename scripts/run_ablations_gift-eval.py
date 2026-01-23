@@ -150,7 +150,7 @@ def load_model(
         "toto": lambda: CircuitLensToto(cfg.toto.model_id, device_map=device_map),
         "moirai": lambda: CircuitLensMoirai(
             cfg.moirai.model_id,
-            context_length=4000,
+            context_length=4000,  # NOTE: this is what the Moirai 1.1 was trained with
             prediction_length=1,  # NOTE: this is arbitrary, just a placeholder
             patch_size=cfg.moirai.patch_size,  # NOTE: try "auto". This can also be replaced in .predict() method
             num_samples=cfg.moirai.num_samples,  # NOTE: this is a placeholder, can be replaced in .predict() method
@@ -573,6 +573,7 @@ def run_standard_evaluation(
                 # )
                 # logger.info(f"Suggested batch size: {suggested_batch_size}")
 
+                set_seed(cfg.eval.rseed)
                 predictor = pipeline.model.create_predictor(
                     batch_size=suggested_batch_size, device=pipeline.model.device
                 )  # NOTE: this is hardcoded following the Moirai Gift-Eval example notebook
@@ -647,7 +648,7 @@ def main(cfg):
 
     # NOTE: setup_ablations* modifies the pipeline in-place by adding the ablations hooks
     ablations_name = None
-    output_subdir_name = "original"
+    output_subdir_name = f"original_rseed-{cfg.eval.rseed}"
     if head_selection_strategy is None:
         logger.info("Skipping ablations")
         pass

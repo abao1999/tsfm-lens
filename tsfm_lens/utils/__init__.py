@@ -32,6 +32,7 @@ from .interp_utils import (
     compute_logit_metrics,
     diagnose_attention,
     extract_projection_weights_Chronos,
+    extract_projection_weights_Moirai,
     extract_projection_weights_TimesFM2p5,
     extract_projection_weights_Toto,
     peak_count_prominence,
