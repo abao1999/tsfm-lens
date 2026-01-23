@@ -110,8 +110,8 @@ fi
 model_name_str="${model_name//\//-}"
 
 toto_num_samples=20
-moirai_num_samples=20
-chronos_num_samples=10
+moirai_num_samples=100
+chronos_num_samples=20
 # Model-specific arguments
 declare -A model_args_map=(
     ["chronos_bolt"]="chronos_bolt.model_id=${model_name} chronos_bolt.limit_prediction_length=false"

@@ -6,6 +6,7 @@ pyrightconfig.json
 # data directory and files
 # data/
 *_debug.ipynb
+*.zip
 *.arrow
 *.csv
 *.png
@@ -35,6 +36,7 @@ external/chronos-forecasting/
 # output and development/debugging and logging files
 # tests/
 results/
+gift-eval_ablation_results/
 output/
 dev/
 eval_results/

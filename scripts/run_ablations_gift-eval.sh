@@ -33,7 +33,7 @@ gpu_index=3
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
-batch_size=24
+batch_size=512
 
 # Ablation grid parameters (bash arrays)
 rseeds=(42)
@@ -49,11 +49,14 @@ model_type="moirai"
 declare -A target_ablations
 # 1, ..., max_num_heads, null
 num_heads_str="$(seq -s ' ' 1 11) null"
-for layer in {0..11}; do
+layer_lst=(9 8 7 6 5 4 3)
+# for layer in {0..11}; do
+for layer in "${layer_lst[@]}"; do
     target_ablations[$layer]="$num_heads_str"
 done
 
 if [ "$head_selection_strategy" != "null" ]; then
+    echo "target_ablations keys: ${!target_ablations[*]}"
     echo "target_ablations: ${target_ablations[*]}"
 fi
 
@@ -78,8 +81,8 @@ fi
 model_name_str="${model_name//\//-}"
 
 toto_num_samples=20
-moirai_num_samples=20
-chronos_num_samples=10
+moirai_num_samples=100
+chronos_num_samples=20
 # Model-specific arguments
 declare -A model_args_map=(
     ["chronos_bolt"]="chronos_bolt.model_id=${model_name} chronos_bolt.limit_prediction_length=false"

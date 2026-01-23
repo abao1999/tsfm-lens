@@ -527,6 +527,8 @@ def run_standard_evaluation(
     for ds_name in tqdm(selected_dataset_names, desc="Evaluating datasets"):
         suggested_batch_size = batch_size
         for term in get_dataset_terms(ds_name, selected_term, medium_long_datasets):
+            # NOTE: a bit of extra redundancy here, for safety
+            suggested_batch_size = batch_size
             ds_key, ds_freq = parse_dataset_key(ds_name, dataset_properties_map)
             logger.info(f"Forecasting on dataset: {ds_name}, term: {term}, key: {ds_key}, freq: {ds_freq}")
 
@@ -587,16 +589,42 @@ def run_standard_evaluation(
 
             # Evaluate
             # from gluonts: https://ts.gluon.ai/dev/_modules/gluonts/model/evaluation.html#evaluate_model
-            res = evaluate_model(
-                predictor,  # type: ignore[arg-type]
-                test_data=dataset.test_data,
-                metrics=METRICS,
-                batch_size=suggested_batch_size,  # default batch size is 1024
-                axis=None,
-                mask_invalid_label=True,
-                allow_nan_forecast=False,
-                seasonality=get_seasonality(dataset.freq),  # season length
-            )
+            try:
+                res = evaluate_model(
+                    predictor,  # type: ignore[arg-type]
+                    test_data=dataset.test_data,
+                    metrics=METRICS,
+                    batch_size=suggested_batch_size,  # default batch size is 1024
+                    axis=None,
+                    mask_invalid_label=True,
+                    allow_nan_forecast=False,
+                    seasonality=get_seasonality(dataset.freq),  # season length
+                )
+            except RuntimeError as e:
+                # Batch size safety check, with a minimum batch size of 4
+                if "out of memory" in str(e) and suggested_batch_size > 4:
+                    logger.warning(f"OOM at batch size {suggested_batch_size}, reducing...")
+                    # NOTE: extra safety check, to ensure minimum batch size of 4
+                    if suggested_batch_size <= 4:
+                        logger.error(
+                            f"Batch size {suggested_batch_size} is too small, a sign of upstream memory issue, aborting..."
+                        )
+                        raise ValueError(
+                            f"Batch size {suggested_batch_size} is too small, a sign of upstream memory issue, aborting..."
+                        )
+
+                    suggested_batch_size //= 2
+                    logger.info(f"New batch size: {suggested_batch_size}")
+
+                    # Adapt batch size for Moirai
+                    if model_type == "moirai":
+                        set_seed(cfg.eval.rseed)
+                        predictor = pipeline.model.create_predictor(
+                            batch_size=suggested_batch_size, device=pipeline.model.device
+                        )
+                        continue
+                else:
+                    raise e
 
             # Build result row
             ds_props = dataset_properties_map[ds_key]
