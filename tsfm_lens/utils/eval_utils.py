@@ -6,6 +6,7 @@ import gc
 import json
 import logging
 import os
+import warnings
 from collections import defaultdict
 from typing import Any
 
@@ -43,6 +44,113 @@ def clear_cuda_cache(device: torch.device) -> None:
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
+
+
+def get_total_gpu_memory():
+    """
+    Get total GPU VRAM capacity in MB.
+    NOTE: this is originally a utility from Toto predictor to find and set the optimal batch size,
+    but we adapt it and use it more generally for all models.
+    """
+    torch.cuda.empty_cache()
+    device = torch.cuda.current_device()
+    return torch.cuda.get_device_properties(device).total_memory / (1024 * 1024)
+
+
+def calculate_optimal_batch_size(
+    model: torch.nn.Module,
+    target_dim: int,
+    prediction_length: int,
+    context_length: int,
+    use_kv_cache: bool,
+    num_samples: int,
+    safety_factor: float = 0.01,
+) -> int:
+    """
+    TODO: this doesn't quite work yet, need to check the memory computation.
+    It's extremely hacky and there were many problems with the original Toto implementation
+
+    Calculate the optimal batch size based on available GPU memory and model requirements.
+    Particularly relevant for Toto and Moirai models
+
+    Args:
+        model: Pre-loaded model
+        target_dim: Target dimensionality (number of variates)
+        prediction_length: Length of prediction horizon
+        context_length: Context window length
+        use_kv_cache: Whether KV cache is used
+        num_samples: Number of samples to generate
+        safety_factor: Safety factor to apply when calculating available memory (default=0.01)
+
+    Returns:
+        Suggested batch size for prediction
+
+    NOTE: this is originally a utility from Toto predictor to find and set the optimal batch size,
+    but we adapt it and use it more generally for all models.
+    """
+
+    warnings.warn("This function doesn't work yet, it's very dangerous to rely on this")
+
+    model_class_name = model.__class__.__name__
+
+    supported_model_classes = ["Toto", "MoiraiForecast"]
+
+    if model_class_name not in supported_model_classes:
+        raise NotImplementedError(f"Optimal batch size calculation not implemented for model class: {model_class_name}")
+
+    try:
+        # Extract model size information
+        if model_class_name == "Toto":
+            model_width = model.model.embed_dim  # Feature dimension
+            model_depth = model.model.num_layers  # Number of transformer layers
+        elif model_class_name == "MoiraiForecast":
+            model_width = model.module.mask_encoding.embedding_dim  # Feature dimension
+            model_depth = len(model.module.encoder.layers)  # Number of transformer layers
+        else:
+            raise NotImplementedError(
+                f"Optimal batch size calculation not implemented for model class: {model_class_name}"
+            )
+
+        # Calculate model's parameter memory footprint in MB
+        model_param_memory_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / (1024 * 1024)
+
+        # Base memory per sample in MB (parameters + activations + gradients)
+        base_memory_per_sample = (model_width * model_depth * 4) / (1024 * 1024)
+
+        # Memory for input/output tensors
+        # TODO: use effective context length from the sample
+        io_memory = (target_dim * (context_length + prediction_length) * 4) / (1024 * 1024)
+
+        # KV cache memory (if used)
+        kv_memory = 0
+        if use_kv_cache:
+            kv_memory = (model_depth * model_width * 2 * context_length * 4) / (1024 * 1024)
+
+        # Total memory per sample
+        mem_per_sample_mb = base_memory_per_sample + io_memory + kv_memory
+
+        # Factor in target dimensions and samples directly
+        # Each dimension and sample has a direct multiplicative effect on memory
+        mem_per_batch_mb = (
+            mem_per_sample_mb * target_dim * num_samples
+        )  # Total memory for a batch with num_samples samples
+
+        # Get total GPU VRAM capacity and subtract model parameter memory
+        gpu_mem = get_total_gpu_memory()  # in MB
+        cuda_reserved_mb = 1024  # Reserve 1GB for CUDA runtime and other overhead
+
+        # Available memory = (Total VRAM - Model parameters - CUDA reserved) * safety factor
+        available_memory = (gpu_mem - model_param_memory_mb - cuda_reserved_mb) * (1 - safety_factor)
+
+        # Calculate max batch size based on available memory
+        # max_batch_size = max(1, int(available_memory / (mem_per_batch_mb / num_samples)))
+        max_batch_size = max(1, int(available_memory / mem_per_batch_mb))
+        max_batch_size = min(1024, max_batch_size)
+
+        return max_batch_size
+    except RuntimeError as e:
+        print(f"Error calculating optimal batch size: {e}")
+        return 1
 
 
 def reshape_batch_data(
@@ -125,65 +233,6 @@ def validate_and_get_sample_count(
         raise ValueError(f"Predictions shape {predictions.shape} != expected {expected_shape}")
 
     return actual_num_samples
-
-
-def calculate_rmse(
-    predictions: np.ndarray,
-    true_vals: np.ndarray,
-    corrected_timesteps: np.ndarray,
-    verbose: bool = False,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Calculate RMSE between median prediction and true values, excluding corrected timesteps.
-
-    Args:
-        predictions: predictions of shape (batch_size, num_samples, num_timepoints)
-        true_vals: Ground truth values of shape (batch_size, num_timepoints)
-        corrected_timesteps: Boolean mask indicating which timesteps were corrected, of shape (num_timepoints,)
-
-    Returns:
-        Tuple containing:
-        - RMSE value (float)
-        - Standard deviation of sample errors (float)
-
-    Note:
-        Returns (0, 0) if no non-corrected timesteps exist (i.e. all timesteps were corrected).
-    """
-    batch_size, num_samples, num_timepoints = predictions.shape
-    assert num_timepoints == true_vals.shape[-1] == len(corrected_timesteps), "Mismatch in number of timepoints"
-
-    if not np.any(~corrected_timesteps):
-        return np.zeros(batch_size), np.zeros(batch_size)
-
-    # shape (batch_size, num_timesteps)
-    median_pred = np.median(predictions, axis=1)
-
-    # shape (batch_size,)
-    rmse = np.sqrt(
-        np.mean(
-            (median_pred[:, ~corrected_timesteps] - true_vals[:, ~corrected_timesteps]) ** 2,
-            axis=-1,
-        )
-    )
-
-    # shape (batch_size, num_samples)
-    sample_errors = np.sqrt(
-        np.mean(
-            (predictions[:, :, ~corrected_timesteps] - true_vals[:, None, ~corrected_timesteps]) ** 2,
-            axis=-1,
-        )
-    )
-    assert sample_errors.shape == (batch_size, num_samples), "Sample errors shape mismatch"
-
-    rmse_std_val = np.std(sample_errors, axis=-1)
-
-    if verbose:
-        print(f"RMSE shape: {rmse.shape}")
-        print(f"RMSE std val shape: {rmse_std_val.shape}")
-
-    assert rmse.shape == rmse_std_val.shape == (batch_size,), "RMSE and RMSE std val shape mismatch"
-
-    return rmse, rmse_std_val
 
 
 def left_pad_and_stack_1D(tensors: list[torch.Tensor]) -> torch.Tensor:

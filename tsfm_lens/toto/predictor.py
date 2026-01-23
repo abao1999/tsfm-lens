@@ -30,6 +30,7 @@ from tqdm.auto import tqdm
 
 from tsfm_lens.dataset import GiftEvalDataset
 from tsfm_lens.toto.pipeline import TotoForecasterCustom
+from tsfm_lens.utils.eval_utils import get_total_gpu_memory
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 DEFAULT_CONTEXT_LENGTH = 4096
@@ -70,13 +71,6 @@ class EvalTask:
     dataset_key: str
     evaluation_target: str = "test"  # Can be "test" or "validation"
     pad_short_series: bool = False
-
-
-def get_total_gpu_memory():
-    """Get total GPU VRAM capacity in MB."""
-    torch.cuda.empty_cache()
-    device = torch.cuda.current_device()
-    return torch.cuda.get_device_properties(device).total_memory / (1024 * 1024)
 
 
 def calculate_optimal_batch_size(

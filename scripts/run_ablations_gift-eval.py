@@ -525,11 +525,13 @@ def run_standard_evaluation(
         csv.writer(f).writerow(row_header)
 
     for ds_name in tqdm(selected_dataset_names, desc="Evaluating datasets"):
+        suggested_batch_size = batch_size
         for term in get_dataset_terms(ds_name, selected_term, medium_long_datasets):
             ds_key, ds_freq = parse_dataset_key(ds_name, dataset_properties_map)
+            logger.info(f"Forecasting on dataset: {ds_name}, term: {term}, key: {ds_key}, freq: {ds_freq}")
 
+            # option for univariate conversion, set by cfg.eval.gift_eval.to_univariate
             to_univariate = cfg.eval.gift_eval.to_univariate
-
             if model_type not in ["moirai", "moirai2"]:
                 # NOTE: since Moirai supports multivariate time series forecast, there is no need to convert the original data into univariate
                 # Check if univariate conversion needed
@@ -540,8 +542,9 @@ def run_standard_evaluation(
                         ).target_dim
                         != 1
                     )
-
             dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=to_univariate, data_dir=cfg.eval.data_dir)
+            # NOTE: for debugging, set a breakpoint here, and in the pdb debugger:
+            # from itertools import islice; context_target = next(islice(dataset.test_data.input, 0, 1))["target"]
 
             # Create predictor
             if model_type == "timesfm":
@@ -555,10 +558,26 @@ def run_standard_evaluation(
                 pipeline.model.hparams.prediction_length = dataset.prediction_length
                 pipeline.model.hparams.target_dim = dataset.target_dim
                 pipeline.model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
+                # NOTE: context_length is stored in pipeline.context_length
+                # and model width (embedding_dim) is stored in pipeline.model.module.mask_encoding.embedding_dim
+
+                # TODO: need to use min(dataset context length, model context length)
+                # # Calculate optimal batch size based on available GPU memory
+                # suggested_batch_size = calculate_optimal_batch_size(
+                #     model=pipeline.model,
+                #     target_dim=dataset.target_dim,
+                #     prediction_length=dataset.prediction_length,
+                #     context_length=pipeline.model.hparams.context_length,
+                #     use_kv_cache=True,
+                #     num_samples=cfg.moirai.num_samples,
+                # )
+                # logger.info(f"Suggested batch size: {suggested_batch_size}")
 
                 predictor = pipeline.model.create_predictor(
-                    batch_size=512, device=pipeline.model.device
+                    batch_size=suggested_batch_size, device=pipeline.model.device
                 )  # NOTE: this is hardcoded following the Moirai Gift-Eval example notebook
+                # NOTE: we can double check the past_length (context length) for this predictor by inspecting:
+                # predictor.__init_args__["input_transform"].__init_passed_kwargs__["transformations"]
 
             elif model_type == "toto":
                 raise ValueError("Use run_toto_evaluation() for Toto models")
@@ -566,11 +585,12 @@ def run_standard_evaluation(
                 raise NotImplementedError(f"Predictor not implemented for model type: {model_type}")
 
             # Evaluate
+            # from gluonts: https://ts.gluon.ai/dev/_modules/gluonts/model/evaluation.html#evaluate_model
             res = evaluate_model(
                 predictor,  # type: ignore[arg-type]
                 test_data=dataset.test_data,
                 metrics=METRICS,
-                batch_size=batch_size,  # default batch size is 1024
+                batch_size=suggested_batch_size,  # default batch size is 1024
                 axis=None,
                 mask_invalid_label=True,
                 allow_nan_forecast=False,

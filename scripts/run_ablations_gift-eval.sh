@@ -33,7 +33,7 @@ gpu_index=3
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
-batch_size=512
+batch_size=24
 
 # Ablation grid parameters (bash arrays)
 rseeds=(42)
@@ -65,7 +65,7 @@ declare -A model_names=(
     ["chronos_bolt"]="amazon/chronos-bolt-base"
     ["chronos"]="amazon/chronos-t5-base"
     ["toto"]="Datadog/Toto-Open-Base-1.0"
-    ["moirai"]="Salesforce/moirai-1.1-R-small"
+    ["moirai"]="Salesforce/moirai-1.1-R-base"
 )
 
 model_name="${model_names[$model_type]}"
@@ -99,7 +99,7 @@ read -ra model_args <<< "${model_args_map[$model_type]}"
 base_args=(
     eval.dataset_name=gift-eval
     eval.data_dir="${data_dir}"
-    eval.gift_eval.dataset_names=null
+    eval.gift_eval.dataset_names=null # NOTE: null is default (all datasets), but for testing/debugging, can specify a set of datasets e.g. ['bizitobs_service']
     eval.gift_eval.max_num_datasets="${max_datasets}"
     eval.gift_eval.term="${term}"
     eval.gift_eval.to_univariate=false

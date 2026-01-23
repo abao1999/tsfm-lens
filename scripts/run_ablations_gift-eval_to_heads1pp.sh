@@ -34,6 +34,7 @@ gpu_index=1
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
+batch_size=1024
 
 # Ablation grid parameters (bash arrays)
 rseeds=(42)
@@ -54,29 +55,40 @@ head_selection_strategy="heads1pp"
 # layers_to_keep_at_heads1pp=(7 8 9 10 11 12 13)
 # echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
 
+model_type="toto"
 
-model_type="chronos_bolt"
-
-chosen_layers=($(seq 1 4))
-# chosen_layers=($(seq 1 8))
-# chosen_layers=($(seq 2 5))
-# chosen_layers=(7 8 9 10 11 12 13)
+chosen_layers=(2 9 10 11)
 echo "chosen_layers: ${chosen_layers[*]}"
-# chosen_layers_mlp=($(seq 3 8))
-# chosen_layers_mlp=($(seq 2 6))
-# chosen_layers_mlp=($(seq 1 4))
-# chosen_layers_mlp=($(seq 3 6))
-# chosen_layers_mlp=($(seq 1 6))
-chosen_layers_mlp=($(seq 1 6))
+chosen_layers_mlp=(10)
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
 num_heads_per_layer_to_skip=0
 echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-# layers_to_keep_at_heads1pp=()
-# layers_to_keep_at_heads1pp=($(seq 1 5))
-layers_to_keep_at_heads1pp=($(seq 1 4))
-# layers_to_keep_at_heads1pp=($(seq 2 5))
+layers_to_keep_at_heads1pp=(2 9 10 11)
 echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
+
+# model_type="chronos_bolt"
+
+# chosen_layers=($(seq 1 4))
+# # chosen_layers=($(seq 1 8))
+# # chosen_layers=($(seq 2 5))
+# # chosen_layers=(7 8 9 10 11 12 13)
+# echo "chosen_layers: ${chosen_layers[*]}"
+# # chosen_layers_mlp=($(seq 3 8))
+# # chosen_layers_mlp=($(seq 2 6))
+# # chosen_layers_mlp=($(seq 1 4))
+# # chosen_layers_mlp=($(seq 3 6))
+# # chosen_layers_mlp=($(seq 1 6))
+# chosen_layers_mlp=($(seq 1 6))
+# echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
+
+# num_heads_per_layer_to_skip=0
+# echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
+# # layers_to_keep_at_heads1pp=()
+# # layers_to_keep_at_heads1pp=($(seq 1 5))
+# layers_to_keep_at_heads1pp=($(seq 1 4))
+# # layers_to_keep_at_heads1pp=($(seq 2 5))
+# echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
 
 # =============================================================================
 # MODEL SETUP
@@ -118,12 +130,13 @@ read -ra model_args <<< "${model_args_map[$model_type]}"
 base_args=(
     eval.dataset_name=gift-eval
     eval.data_dir="${data_dir}"
-    eval.gift_eval.dataset_names=null
+    eval.gift_eval.dataset_names=null # NOTE: null is default (all datasets), but for testing/debugging, can specify a set of datasets e.g. ['bizitobs_service']
     eval.gift_eval.max_num_datasets="${max_datasets}"
     eval.gift_eval.term="${term}"
     eval.gift_eval.to_univariate=false
     eval.device="cuda:${gpu_index}"
     eval.results_save_dir="${HOME}/tsfm-lens/results"
+    eval.batch_size="${batch_size}"
     ablation.model_name_str="${model_name_str}"
     ablation.model_type="${model_type}"
 )
