@@ -19,7 +19,7 @@ Step 3:
 Step 4:
 `uv pip install gluonts==0.15.1`
 
-Crucially, we benchmark on `Gift-Eval`, which requires `pandas==2.0.0` and also `gluonts==0.15.1`. The latter requirement gets over-ridden when installing Moirai (uni2ts) from the tsfms group. For this reason, Step 4 is crucial, for running the ablation evaluation on gift-eval.
+Crucially, we benchmark on `Gift-Eval`, which requires `pandas==2.0.0` and also `gluonts==0.15.1`. The latter requirement gets overridden when installing Moirai (`uni2ts`) from the tsfms group. For this reason, Step 4 enables running the ablation evaluations on `Gift-Eval`. The installation of Moirai also downgrades other dependencies, notably downgrading CUDA version 12.6 to version 12.1, but this does not present an issue for us.
 
 To fetch and initialize the timesfm submodule:
 ```
