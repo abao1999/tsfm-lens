@@ -587,44 +587,44 @@ def run_standard_evaluation(
             else:
                 raise NotImplementedError(f"Predictor not implemented for model type: {model_type}")
 
-            # Evaluate
+            # Evaluate with OOM retry logic
             # from gluonts: https://ts.gluon.ai/dev/_modules/gluonts/model/evaluation.html#evaluate_model
-            try:
-                res = evaluate_model(
-                    predictor,  # type: ignore[arg-type]
-                    test_data=dataset.test_data,
-                    metrics=METRICS,
-                    batch_size=suggested_batch_size,  # default batch size is 1024
-                    axis=None,
-                    mask_invalid_label=True,
-                    allow_nan_forecast=False,
-                    seasonality=get_seasonality(dataset.freq),  # season length
-                )
-            except RuntimeError as e:
-                # Batch size safety check, with a minimum batch size of 4
-                if "out of memory" in str(e) and suggested_batch_size > 4:
-                    logger.warning(f"OOM at batch size {suggested_batch_size}, reducing...")
-                    # NOTE: extra safety check, to ensure minimum batch size of 4
-                    if suggested_batch_size <= 4:
-                        logger.error(
-                            f"Batch size {suggested_batch_size} is too small, a sign of upstream memory issue, aborting..."
-                        )
-                        raise ValueError(
-                            f"Batch size {suggested_batch_size} is too small, a sign of upstream memory issue, aborting..."
-                        )
+            while True:
+                try:
+                    res = evaluate_model(
+                        predictor,  # type: ignore[arg-type]
+                        test_data=dataset.test_data,
+                        metrics=METRICS,
+                        batch_size=suggested_batch_size,  # default batch size is 1024
+                        axis=None,
+                        mask_invalid_label=True,
+                        allow_nan_forecast=False,
+                        seasonality=get_seasonality(dataset.freq),  # season length
+                    )
+                    break  # Success, exit retry loop
+                except RuntimeError as e:
+                    # Keep halving batch size while > 4 on OOM errors
+                    if "out of memory" in str(e) and suggested_batch_size > 4:
+                        # extra safety check to ensure the batch size is not too small
+                        if suggested_batch_size <= 4:
+                            logger.error(f"Batch size {suggested_batch_size} is too small, cannot reduce further")
+                            raise e
 
-                    suggested_batch_size //= 2
-                    logger.info(f"New batch size: {suggested_batch_size}")
+                        logger.warning(f"OOM at batch size {suggested_batch_size}, reducing...")
+                        suggested_batch_size //= 2
+                        logger.info(f"New batch size: {suggested_batch_size}")
 
-                    # Adapt batch size for Moirai
-                    if model_type == "moirai":
-                        set_seed(cfg.eval.rseed)
-                        predictor = pipeline.model.create_predictor(
-                            batch_size=suggested_batch_size, device=pipeline.model.device
-                        )
-                        continue
-                else:
-                    raise e
+                        # Recreate predictor with new batch size for Moirai
+                        if model_type == "moirai":
+                            set_seed(cfg.eval.rseed)
+                            predictor = pipeline.model.create_predictor(
+                                batch_size=suggested_batch_size, device=pipeline.model.device
+                            )
+                        # Continue to retry with smaller batch size
+                    else:
+                        if "out of memory" in str(e):
+                            logger.error(f"OOM at minimum batch size {suggested_batch_size}, cannot reduce further")
+                        raise e
 
             # Build result row
             ds_props = dataset_properties_map[ds_key]
