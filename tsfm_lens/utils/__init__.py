@@ -12,10 +12,8 @@ from .data_utils import (
     safe_standardize,
 )
 from .eval_utils import (
-    calculate_optimal_batch_size,
     clear_cuda_cache,
     combine_metrics_dicts,
-    get_total_gpu_memory,
     left_pad_and_stack_1D,
     load_json_data,
     normalize_by_seasonal_naive,

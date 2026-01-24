@@ -520,6 +520,10 @@ def run_standard_evaluation(
         data loss if evaluation is interrupted. Multivariate datasets are
         automatically converted to univariate if needed.
     """
+    # Extra safety
+    if model_type == "toto":
+        raise ValueError("Use run_toto_evaluation() for Toto models")
+
     logger.info(f"Running standard evaluation with batch size: {batch_size}")
     with open(csv_path, "w", newline="") as f:
         csv.writer(f).writerow(row_header)
@@ -563,32 +567,17 @@ def run_standard_evaluation(
                 # NOTE: context_length is stored in pipeline.context_length
                 # and model width (embedding_dim) is stored in pipeline.model.module.mask_encoding.embedding_dim
 
-                # TODO: need to use min(dataset context length, model context length)
-                # # Calculate optimal batch size based on available GPU memory
-                # suggested_batch_size = calculate_optimal_batch_size(
-                #     model=pipeline.model,
-                #     target_dim=dataset.target_dim,
-                #     prediction_length=dataset.prediction_length,
-                #     context_length=pipeline.model.hparams.context_length,
-                #     use_kv_cache=True,
-                #     num_samples=cfg.moirai.num_samples,
-                # )
-                # logger.info(f"Suggested batch size: {suggested_batch_size}")
-
                 set_seed(cfg.eval.rseed)
                 predictor = pipeline.model.create_predictor(
                     batch_size=suggested_batch_size, device=pipeline.model.device
                 )  # NOTE: this is hardcoded following the Moirai Gift-Eval example notebook
                 # NOTE: we can double check the past_length (context length) for this predictor by inspecting:
                 # predictor.__init_args__["input_transform"].__init_passed_kwargs__["transformations"]
-
-            elif model_type == "toto":
-                raise ValueError("Use run_toto_evaluation() for Toto models")
             else:
                 raise NotImplementedError(f"Predictor not implemented for model type: {model_type}")
 
             # Evaluate with OOM retry logic
-            # from gluonts: https://ts.gluon.ai/dev/_modules/gluonts/model/evaluation.html#evaluate_model
+            # NOTE: evaluate_model is from gluonts: https://ts.gluon.ai/dev/_modules/gluonts/model/evaluation.html#evaluate_model
             while True:
                 try:
                     res = evaluate_model(

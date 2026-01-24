@@ -46,5 +46,4 @@ This uses `.pre-commit-config.yaml` (nbstripout) to clear `*.ipynb` outputs on c
 + TimesFM 2.5 doesn't work when not cuda:0 i.e. when gpu index is not 0. The predictions flatline.
 + Make the circuitlens `add_ablation_hooks_explicit` function signature more intuitive
 + For QOL, add a field to each model's CircuitLens class to store the model width (embedding dimension)
-+ Fix the `calculate_optimal_batch_size` function in eval_utils. It's extremely hacky and doesn't work, but it's also not necessary.
 + Find out how Gift-Eval repo computes CRPS, should be using MeanWeightedSumQuantileLoss

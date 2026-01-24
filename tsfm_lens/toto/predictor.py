@@ -30,7 +30,6 @@ from tqdm.auto import tqdm
 
 from tsfm_lens.dataset import GiftEvalDataset
 from tsfm_lens.toto.pipeline import TotoForecasterCustom
-from tsfm_lens.utils.eval_utils import get_total_gpu_memory
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 DEFAULT_CONTEXT_LENGTH = 4096
@@ -73,15 +72,26 @@ class EvalTask:
     pad_short_series: bool = False
 
 
+def get_total_gpu_memory() -> float:
+    """
+    Get total GPU VRAM capacity in MB.
+    NOTE: this is originally a utility from Toto predictor to find and set the optimal batch size,
+    but we adapt it and use it more generally for all models.
+    """
+    torch.cuda.empty_cache()
+    device = torch.cuda.current_device()
+    return torch.cuda.get_device_properties(device).total_memory / (1024 * 1024)
+
+
 def calculate_optimal_batch_size(
-    model,
-    target_dim,
-    prediction_length,
-    context_length,
-    use_kv_cache,
-    num_samples,
-    safety_factor=0.01,
-):
+    model: torch.nn.Module,
+    target_dim: int,
+    prediction_length: int,
+    context_length: int,
+    use_kv_cache: bool,
+    num_samples: int,
+    safety_factor: float = 0.01,
+) -> int:
     """
     Calculate the optimal batch size based on available GPU memory and model requirements.
 
