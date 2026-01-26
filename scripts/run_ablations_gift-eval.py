@@ -180,28 +180,52 @@ def setup_ablations_by_strategy(
     Configure ablation hooks on the model pipeline based on the specified strategy.
 
     Selects which attention heads to ablate using one of several strategies, then
-    registers ablation hooks on the pipeline. Supports both ranking-based selection
-    (using precomputed srank or alignment scores) and random selection.
+    registers ablation hooks on the pipeline. Supports ranking-based selection
+    (using precomputed srank or alignment scores), random selection, and full-layer
+    ablation.
+
+    The function first clears any existing hooks and attribution state, then selects
+    heads according to the strategy and registers new ablation hooks.
 
     Args:
-        pipeline: The CircuitLens model pipeline to configure ablations on.
-        ablations_layers_lst: List of layer indices to ablate (None to skip ablations).
-        ablations_types: List of component types to ablate (e.g., ["head"]).
-        ablate_n_heads_per_layer: Number of heads to ablate per layer (None for all).
-        head_selection_strategy: One of:
-            - "random": Random head selection (seeded by rseed)
-            - "srank": Select heads with lowest stable rank (least important)
-            - "srank_reverse": Select heads with highest srank (most important)
-            - "alignment": Select heads with highest alignment scores
-            - "alignment_reverse": Select heads with lowest alignment scores
-        rseed: Random seed for reproducible random selection.
+        pipeline: The CircuitLens model pipeline to configure ablations on. Must have
+            `num_heads` attribute and `add_ablation_hooks_explicit` method.
+        ablations_layers_lst: List of layer indices to ablate. If None, no ablations
+            are configured and the function returns None early.
+        ablations_types: List of component types to ablate (e.g., ["head"], ["mlp"],
+            or ["head", "mlp"]).
+        ablate_n_heads_per_layer: Number of heads to ablate per layer. If None,
+            all heads in the specified layers are ablated.
+        head_selection_strategy: Strategy for selecting which heads to ablate:
+            - "random": Randomly select heads using `rseed` for reproducibility.
+            - "srank": Select heads with lowest stable rank scores (least important
+              heads, as low srank indicates less complex/useful representations).
+            - "srank_reverse": Select heads with highest stable rank scores (most
+              important heads).
+            - "alignment": Select heads with highest alignment scores (most aligned
+              with the task).
+            - "alignment_reverse": Select heads with highest alignment scores.
+              Note: Currently behaves identically to "alignment" due to implementation.
+            - "all_components": Ablate all heads in the specified layers (equivalent
+              to setting `ablate_n_heads_per_layer=None` with any strategy).
+        rseed: Random seed for reproducible head selection when using "random" strategy.
 
     Returns:
-        A string describing the ablation configuration (e.g., "head_layers_1-2_heads-10"),
-        or None if no ablations are configured.
+        A string describing the ablation configuration in the format
+        "{types}_layers_{layer_ids}_heads-{n_heads}", e.g., "head_layers_1-2_heads-10"
+        or "head-mlp_layers_0-1-2_heads-all". Returns None if `ablations_layers_lst`
+        is None.
 
     Raises:
-        ValueError: If the required ranking file is not found for srank/alignment strategies.
+        ValueError: If the required ranking file is not found for srank/alignment
+            strategies. Ranking files are expected at:
+            `{ASSETS_DIR}/{PipelineClassName}_{ranking_type}_low_to_high_by_layer.json`
+        ValueError: If an invalid `head_selection_strategy` is provided.
+
+    Note:
+        For ranking-based strategies (srank, alignment), the ranking files must contain
+        a JSON dict mapping layer indices (as strings) to dicts of head indices and
+        their scores, ordered from lowest to highest score.
     """
     if ablations_layers_lst is None:
         logger.info("No ablations configured")
@@ -249,6 +273,8 @@ def setup_ablations_by_strategy(
             if reverse:
                 head_list = head_list[::-1]
             heads_to_ablate.extend((int(layer), int(h)) for h in head_list[:n_heads])
+    elif strategy == "all_components":
+        heads_to_ablate = [(layer, h) for layer in layers for h in range(pipeline.num_heads)]
     else:
         raise ValueError(f"Invalid strategy: {strategy}")
 
@@ -680,7 +706,18 @@ def main(cfg):
         )
         output_subdir_name = f"heads1pp_rseed-{cfg.eval.rseed}"
 
-    elif head_selection_strategy in ["random", "srank", "srank_reverse", "alignment", "alignment_reverse"]:
+    elif head_selection_strategy in [
+        "random",
+        "srank",
+        "srank_reverse",
+        "alignment",
+        "alignment_reverse",
+        "all_components",
+    ]:
+        if head_selection_strategy == "all_components":
+            assert cfg.ablation.ablate_n_heads_per_layer is None, (
+                "if using all_components, ablate_n_heads_per_layer must be None (meaning ablate all heads per layer)"
+            )
         logger.info(f"Ablating by {head_selection_strategy}")
         ablations_name = setup_ablations_by_strategy(
             pipeline,
@@ -694,8 +731,8 @@ def main(cfg):
         if not cfg.ablation.model_name_str:
             raise ValueError("model_name_str is required")
 
-        strategy_prefix = {s: f"{s}_" for s in ["alignment", "alignment_reverse", "srank", "srank_reverse", "random"]}
-        output_subdir_name = f"{strategy_prefix[head_selection_strategy]}rseed-{cfg.eval.rseed}"
+        strategy_prefix = f"{head_selection_strategy}_"
+        output_subdir_name = f"{strategy_prefix}rseed-{cfg.eval.rseed}"
     else:
         raise ValueError(f"Invalid head selection strategy: {head_selection_strategy}")
 
