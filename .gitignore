@@ -36,6 +36,7 @@ external/chronos-forecasting/
 # output and development/debugging and logging files
 # tests/
 results/
+results*/
 gift-eval_ablation_results/
 output/
 dev/

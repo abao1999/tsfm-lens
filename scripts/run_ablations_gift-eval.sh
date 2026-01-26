@@ -49,7 +49,7 @@ model_type="moirai"
 declare -A target_ablations
 # 1, ..., max_num_heads, null
 num_heads_str="$(seq -s ' ' 1 11) null"
-layer_lst=(9 8 7 6 5 4 3)
+layer_lst=(0)
 # for layer in {0..11}; do
 for layer in "${layer_lst[@]}"; do
     target_ablations[$layer]="$num_heads_str"
