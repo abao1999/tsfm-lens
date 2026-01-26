@@ -274,15 +274,25 @@ def setup_ablations_by_strategy(
                 head_list = head_list[::-1]
             heads_to_ablate.extend((int(layer), int(h)) for h in head_list[:n_heads])
     elif strategy == "all_components":
+        # NOTE: this is only relevant if "head" is in ablations_types
         heads_to_ablate = [(layer, h) for layer in layers for h in range(pipeline.num_heads)]
     else:
         raise ValueError(f"Invalid strategy: {strategy}")
 
-    logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
+    if "head" in ablations_types:
+        logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
+    else:
+        logger.info("Since 'head' is not in ablations_types, no heads will be ablated")
+
+    if "mlp" in ablations_types:
+        logger.info(f"Ablating MLPs in layers: {layers}")
+    else:
+        logger.info("Since 'mlp' is not in ablations_types, no MLPs will be ablated")
+
     pipeline.add_ablation_hooks_explicit(
         ablations_types=ablations_types,
-        layers_to_ablate_mlp=layers,
-        heads_to_ablate=heads_to_ablate,
+        layers_to_ablate_mlp=layers,  # NOTE that this is only relevant if "mlp" is in ablations_types
+        heads_to_ablate=heads_to_ablate,  # NOTE again that this is only relevant if "head" is in ablations_types
     )
 
     return f"{'-'.join(ablations_types)}_layers_{'-'.join(map(str, layers))}_heads-{n_heads or 'all'}"
