@@ -13,11 +13,12 @@ ablation:
   # Device configuration
   device: cuda 
 
-  # If head_selection_strategy is null, then default to ablate to heads@1pp
-  to_heads_at_1pp:
+  # If head_selection_strategy is null, then default to ablate to heads@xpp
+  to_heads_at_xpp:
+    threshold_pct: 1.0
     chosen_layers: null
     num_heads_per_layer_to_skip: 0
-    layers_to_keep_at_heads1pp: null
+    layers_to_keep_at_headsxpp: null
     chosen_layers_mlp: null
 
 

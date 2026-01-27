@@ -949,7 +949,7 @@ def diagnose_attention(
             f"Entropy: {softmax_stats['entropy_mean']:.3f}±{softmax_stats['entropy_std']:.3f} "
             f"Max_p: {softmax_stats['max_weight_mean']:.3f}±{softmax_stats['max_weight_std']:.3f}"
         )
-        summary.append(f"Alignment↔sharpness corr: {softmax_stats['corr_alignment_vs_neg_entropy']:.3f}")
+        summary.append(f"Alignment vs sharpness corr: {softmax_stats['corr_alignment_vs_neg_entropy']:.3f}")
 
     return {
         "spectral_norm": spectral_norm,
