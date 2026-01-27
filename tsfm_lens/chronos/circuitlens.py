@@ -9,7 +9,6 @@ from torch.utils.hooks import RemovableHandle
 from tsfm_lens.chronos.pipeline import ChronosPipelineCustom
 from tsfm_lens.circuitlens import BaseCircuitLens
 
-
 @dataclass
 class CircuitLensChronos(ChronosPipelineCustom, BaseCircuitLens):
     """

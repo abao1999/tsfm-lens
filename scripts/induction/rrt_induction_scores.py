@@ -8,15 +8,7 @@ import torch
 from tqdm import tqdm
 
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
-
-# Change device detection to check GPU count
-device = "cuda:1" if torch.cuda.is_available() else "cpu"
-num_gpus = torch.cuda.device_count() if device == "cuda:1" else 0
-
-# Set memory allocation configuration to reduce fragmentation
-if device == "cuda:1":
-    torch.cuda.set_per_process_memory_fraction(0.95)  # Leave some memory free
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+from tsfm_lens.utils import set_seed
 
 
 def generate_rrt_sequences(
@@ -62,12 +54,7 @@ def generate_rrt_sequences(
         tokens.append(token_sequence)
 
     # Stack sequences with repetition pattern (inlined from rrt.stack_sequences)
-    sequences_to_stack = (
-        tokens * repeat_factor
-        + tokens[:extension]
-        + [tokens[extension][:, :sub_extension]]
-        + [torch.ones((batch_size, 1), dtype=torch.int) * EOS_TOKEN_ID]
-    )
+    sequences_to_stack = tokens * repeat_factor + tokens[:extension] + [tokens[extension][:, :sub_extension]]
     token_ids = torch.cat(sequences_to_stack, dim=-1)
 
     # Create attention mask
@@ -89,12 +76,22 @@ def generate_rrt_sequences(
     return token_ids, attention_mask, decoder_input_ids
 
 
-@hydra.main(config_path="../config", config_name="config", version_base=None)
+@hydra.main(config_path="../../config", config_name="config", version_base=None)
 def main(cfg):
-    device = torch.device(cfg.eval.device if torch.cuda.is_available() else "cpu")
-    # Set memory allocation configuration to reduce fragmentation
+    # single source of truth for device placement
+    gpu_count = torch.cuda.device_count()
     if torch.cuda.is_available():
-        torch.cuda.set_per_process_memory_fraction(0.95)  # Leave some memory free
+        if hasattr(cfg.eval, "device") and cfg.eval.device is not None:
+            target_device = torch.device(cfg.eval.device)
+        elif gpu_count > 1:
+            target_device = torch.device("cuda:1")
+        else:
+            target_device = torch.device("cuda:0")
+    else:
+        target_device = torch.device("cpu")
+
+    if target_device.type == "cuda":
+        torch.cuda.set_per_process_memory_fraction(0.95, device=target_device)
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     set_seed(cfg.seed)
@@ -106,6 +103,9 @@ def main(cfg):
     model_names = cfg.induction_scores.model_names
 
     total_iterations = len(repeat_factors) * len(sequence_lengths) * len(model_names)
+    std_factor = float(cfg.induction_scores.batch_size) ** 0.5
+
+    EOS_TOKEN_ID = torch.tensor(1, dtype=torch.int)
 
     with tqdm(total=total_iterations, desc="Processing configuations and models") as pbar:
         for repeat_factor in repeat_factors:
@@ -125,7 +125,15 @@ def main(cfg):
                     extension=extension,
                     sub_extension=sub_extension,
                     sequence_length=sequence_length,
-                    device=device,
+                    device=target_device,
+                )
+                eos_value = EOS_TOKEN_ID.to(device=target_device, dtype=token_ids.dtype)
+                eos_column = (
+                    torch.ones((token_ids.size(0), 1), dtype=token_ids.dtype, device=target_device) * eos_value
+                )
+                token_ids = torch.cat([token_ids, eos_column], dim=-1)
+                attention_mask = torch.cat(
+                    [attention_mask, torch.ones_like(eos_column, dtype=attention_mask.dtype)], dim=-1
                 )
 
                 t_idx = decoder_input_ids.shape[-1] - 1  # current token in decoder input ids
@@ -141,8 +149,8 @@ def main(cfg):
 
                     pipeline = CircuitLensChronos.from_pretrained(
                         model_name,
-                        device_map="cuda:1" if num_gpus > 1 else device,
-                        dtype=torch.bfloat16,
+                        device_map=str(target_device) if target_device.type == "cuda" else target_device,
+                        torch_dtype=torch.bfloat16,
                     )
                     num_layers = pipeline.model.model.config.num_decoder_layers
                     num_heads = pipeline.model.model.config.num_heads
@@ -155,11 +163,11 @@ def main(cfg):
                     # Initialize tensor variables before branching
                     mosaic_center_mean = torch.zeros((num_layers, num_heads))
                     mosaic_right_mean = torch.zeros((num_layers, num_heads))
-                    expected_token_attribution_mean = torch.zeros((num_layers, num_heads))
+                    correct_token_attribution_mean = torch.zeros((num_layers, num_heads))
 
                     mosaic_center_std = torch.zeros((num_layers, num_heads))
                     mosaic_right_std = torch.zeros((num_layers, num_heads))
-                    expected_token_attribution_std = torch.zeros((num_layers, num_heads))
+                    correct_token_attribution_std = torch.zeros((num_layers, num_heads))
 
                     # Original code for processing the full batch
                     outputs = t5_model.generate(
@@ -180,76 +188,46 @@ def main(cfg):
                     # cross_attentions is a list of length layers, each with shape [batch, heads, dec_length, enc_length]
                     cross_attn_probs = outputs.cross_attentions
 
-                    # Extract overall scores for expected tokens
-                    expected_tokens = token_ids[:, s_idx]
-                    token_scores = torch.gather(outputs.scores[0], dim=-1, index=expected_tokens.unsqueeze(1)).squeeze()
+                    # Extract overall scores for correct tokens (token right of the last occurrence)
+                    correct_tokens = token_ids[:, s_idx + 1]
+                    token_scores = torch.gather(outputs.scores[0], dim=-1, index=correct_tokens.unsqueeze(1)).squeeze()
 
-                    std_factor = torch.sqrt(torch.tensor(cfg.induction_scores.batch_size))
                     overall_scores_mean = float(token_scores.to("cpu").mean())
                     overall_scores_std = float(token_scores.to("cpu").std()) / std_factor
 
                     for layer in range(num_layers):
                         for head in range(num_heads):
-                            std_factor = torch.sqrt(torch.tensor(cfg.induction_scores.batch_size))
+                            center_attn = cross_attn_probs[0][layer][:, head, t_idx, s_idx]
+                            mosaic_center_mean[layer][head] = float(center_attn.to("cpu").mean())
+                            mosaic_center_std[layer][head] = float(center_attn.to("cpu").std()) / std_factor
 
-                            token_matches = [s_idx - i * sequence_length for i in range(repeat_factor)]
-                            # mean over the batch
-                            mosaic_center_mean[layer][head] = float(
-                                cross_attn_probs[0][layer][:, head, t_idx, token_matches]
-                                .max(dim=-1)
-                                .values.mean()
-                                .to("cpu")
-                            )
-                            mosaic_center_std[layer][head] = (
-                                float(
-                                    cross_attn_probs[0][layer][:, head, t_idx, token_matches]
-                                    .max(dim=-1)
-                                    .values.std()
-                                    .to("cpu")
-                                )
-                                / std_factor
-                            )
-
-                            right_token_matches = [t + 1 for t in token_matches]
-                            mosaic_right_mean[layer][head] = float(
-                                cross_attn_probs[0][layer][:, head, t_idx, right_token_matches]
-                                .max(dim=-1)
-                                .values.mean()
-                                .to("cpu")
-                            )
-                            mosaic_right_std[layer][head] = (
-                                float(
-                                    cross_attn_probs[0][layer][:, head, t_idx, right_token_matches]
-                                    .max(dim=-1)
-                                    .values.std()
-                                    .to("cpu")
-                                )
-                                / std_factor
-                            )
+                            right_attn = cross_attn_probs[0][layer][:, head, t_idx, s_idx + 1]
+                            mosaic_right_mean[layer][head] = float(right_attn.to("cpu").mean())
+                            mosaic_right_std[layer][head] = float(right_attn.to("cpu").std()) / std_factor
 
                             # logit attribution for the current head and layer
                             #  NOTE: using cross-attention (CA) head atttribution, double check
                             attributed_logits = pipeline.unembed_residual(
                                 pipeline.ca_head_attribution_outputs[layer][head][0][:, -1, :]
                             )
-                            expected_token_attribution = torch.gather(
+                            correct_token_attribution = torch.gather(
                                 attributed_logits,
                                 dim=1,
-                                index=expected_tokens.unsqueeze(1),
-                            )  # attribution for the expected token
+                                index=correct_tokens.unsqueeze(1),
+                            )  # attribution for the correct token
 
-                            expected_token_attribution_mean[layer][head] = float(
-                                expected_token_attribution.detach().to("cpu").mean()
+                            correct_token_attribution_mean[layer][head] = float(
+                                correct_token_attribution.detach().to("cpu").mean()
                             )
-                            expected_token_attribution_std[layer][head] = (
-                                float(expected_token_attribution.detach().to("cpu").std()) / std_factor
+                            correct_token_attribution_std[layer][head] = (
+                                float(correct_token_attribution.detach().to("cpu").std()) / std_factor
                             )
 
                     # Clean up after full batch processing
                     del outputs
                     del cross_attn_probs
                     gc.collect()
-                    if device == "cuda:1":
+                    if target_device.type == "cuda":
                         torch.cuda.empty_cache()
 
                     # Clean model name without the 'amazon/' prefix
@@ -257,7 +235,7 @@ def main(cfg):
 
                     # Create directory structure
                     base_dir = os.path.join(
-                        cfg.eval.results_save_dir,
+                        "outputs",
                         cfg.induction_scores.rrt_scores_dir,
                         clean_model_name,
                         config_key,
@@ -270,10 +248,11 @@ def main(cfg):
                         "std": mosaic_center_std,
                     }
                     right_scores = {"mean": mosaic_right_mean, "std": mosaic_right_std}
-                    expected_token_attribution = {
-                        "mean": expected_token_attribution_mean,
-                        "std": expected_token_attribution_std,
+                    correct_token_attribution = {
+                        "mean": correct_token_attribution_mean,
+                        "std": correct_token_attribution_std,
                     }
+                    
 
                     rrt_vars = {
                         "std_factor": std_factor,
@@ -286,8 +265,8 @@ def main(cfg):
                     with open(os.path.join(base_dir, "right_scores.pkl"), "wb") as f:
                         pickle.dump(right_scores, f)
 
-                    with open(os.path.join(base_dir, "expected_token_attribution.pkl"), "wb") as f:
-                        pickle.dump(expected_token_attribution, f)
+                    with open(os.path.join(base_dir, "correct_token_attribution.pkl"), "wb") as f:
+                        pickle.dump(correct_token_attribution, f)
 
                     with open(os.path.join(base_dir, "rrt_vars.pkl"), "wb") as f:
                         pickle.dump(rrt_vars, f)
@@ -297,7 +276,7 @@ def main(cfg):
                     del pipeline
                     del t5_model
                     gc.collect()
-                    if device == "cuda:1":
+                    if target_device.type == "cuda":
                         torch.cuda.empty_cache()
 
                     pbar.update(1)
