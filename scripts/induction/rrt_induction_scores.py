@@ -10,6 +10,8 @@ from tqdm import tqdm
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 from tsfm_lens.utils import set_seed
 
+import pdb
+
 
 def generate_rrt_sequences(
     vocab_range: tuple[int, int] = (1911, 2187),
@@ -161,12 +163,17 @@ def main(cfg):
                     t5_model = pipeline.model.model
 
                     # Initialize tensor variables before branching
+                    mosaic_center_scores = torch.zeros((cfg.induction_scores.batch_size, num_layers, num_heads))
                     mosaic_center_mean = torch.zeros((num_layers, num_heads))
-                    mosaic_right_mean = torch.zeros((num_layers, num_heads))
-                    correct_token_attribution_mean = torch.zeros((num_layers, num_heads))
-
                     mosaic_center_std = torch.zeros((num_layers, num_heads))
+
+                    mosaic_right_scores = torch.zeros((cfg.induction_scores.batch_size, num_layers, num_heads))
+                    mosaic_right_mean = torch.zeros((num_layers, num_heads))
                     mosaic_right_std = torch.zeros((num_layers, num_heads))
+                    
+                    correct_token_attribution_scores = torch.zeros((cfg.induction_scores.batch_size, num_layers, num_heads))
+                    all_token_attribution_scores = torch.zeros((cfg.induction_scores.batch_size, num_layers, num_heads, t5_model.config.vocab_size))
+                    correct_token_attribution_mean = torch.zeros((num_layers, num_heads))
                     correct_token_attribution_std = torch.zeros((num_layers, num_heads))
 
                     # Original code for processing the full batch
@@ -198,10 +205,13 @@ def main(cfg):
                     for layer in range(num_layers):
                         for head in range(num_heads):
                             center_attn = cross_attn_probs[0][layer][:, head, t_idx, s_idx]
+                            # breakpoint()
+                            mosaic_center_scores[:, layer, head] = center_attn.detach().to("cpu")
                             mosaic_center_mean[layer][head] = float(center_attn.to("cpu").mean())
                             mosaic_center_std[layer][head] = float(center_attn.to("cpu").std()) / std_factor
 
                             right_attn = cross_attn_probs[0][layer][:, head, t_idx, s_idx + 1]
+                            mosaic_right_scores[:, layer, head] = right_attn.detach().to("cpu")
                             mosaic_right_mean[layer][head] = float(right_attn.to("cpu").mean())
                             mosaic_right_std[layer][head] = float(right_attn.to("cpu").std()) / std_factor
 
@@ -216,6 +226,9 @@ def main(cfg):
                                 index=correct_tokens.unsqueeze(1),
                             )  # attribution for the correct token
 
+                            all_token_attribution_scores[:, layer, head, :] = attributed_logits.detach().to("cpu")
+                            # breakpoint()
+                            correct_token_attribution_scores[:, layer, head] = correct_token_attribution.detach().to("cpu").squeeze()
                             correct_token_attribution_mean[layer][head] = float(
                                 correct_token_attribution.detach().to("cpu").mean()
                             )
@@ -244,15 +257,21 @@ def main(cfg):
 
                     # Save individual files
                     center_scores = {
+                        "all_center_scores": mosaic_center_scores,
                         "mean": mosaic_center_mean,
                         "std": mosaic_center_std,
                     }
-                    right_scores = {"mean": mosaic_right_mean, "std": mosaic_right_std}
+                    right_scores = {
+                        "all_right_scores": mosaic_right_scores,
+                        "mean": mosaic_right_mean, 
+                        "std": mosaic_right_std
+                    }
                     correct_token_attribution = {
+                        "correct_token_attributions": correct_token_attribution_scores,
+                        "all_token_attributions": all_token_attribution_scores,
                         "mean": correct_token_attribution_mean,
                         "std": correct_token_attribution_std,
                     }
-                    
 
                     rrt_vars = {
                         "std_factor": std_factor,
