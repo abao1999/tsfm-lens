@@ -8,6 +8,7 @@ from chronos import ChronosModel
 from chronos.chronos_bolt import ChronosBoltModelForForecasting
 from scipy.signal import find_peaks
 from toto.model.backbone import TotoBackbone
+from uni2ts.model.moirai import MoiraiForecast
 
 from tsfm_lens.circuitlens import BaseCircuitLens
 
@@ -505,6 +506,121 @@ def extract_projection_weights_Toto(
         print(f"Shape of each K head (before transpose): {wK_heads[0].shape}")
         # print(f"Number of V heads: {len(wV_heads)}")
         # print(f"Shape of each V head: {wV_heads[0].shape}")
+
+        print(f"wQ[head {selected_head}] shape (after transpose): {selected_head_WQ.shape}")
+        print(f"wK[head {selected_head}] shape (after transpose): {selected_head_WK.shape}")
+        print(f"wV[head {selected_head}] shape (after transpose): {selected_head_WV.shape}")
+        print(f"wO[head {selected_head}] shape: {selected_head_WO.shape}")
+
+    return selected_head_WQ, selected_head_WK, selected_head_WV, selected_head_WO
+
+
+def extract_projection_weights_Moirai(
+    model: MoiraiForecast,
+    selected_layer: int,
+    selected_head: int,
+    verbose: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Extract query (Q), key (K), value (V), and output (O) projection weight matrices
+    for a specific attention head from a Moirai model.
+
+    Moirai uses separate Q, K, V projection layers via GroupedQueryAttention, with
+    q_proj, k_proj, v_proj, and out_proj as distinct Linear layers. This function
+    extracts the weights and separates them into per-head components.
+
+    Args:
+        model: The MoiraiForecast model instance to extract weights from
+        selected_layer: Layer index (0-indexed) in the transformer encoder
+        selected_head: Head index (0-indexed) within the attention layer. Must be in
+            range [0, num_heads)
+        verbose: If True, prints diagnostic information about shapes and indices
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: A tuple containing
+            (head_WQ, head_WK, head_WV, head_WO) where:
+            - head_WQ: Query projection weights with shape (head_dim, d_model)
+            - head_WK: Key projection weights with shape (head_dim, d_model)
+            - head_WV: Value projection weights with shape (head_dim, d_model)
+            - head_WO: Output projection weights with shape (head_dim, d_model)
+                * head_dim: Dimension per attention head (d_model // num_heads)
+                * d_model: Full model embedding dimension
+
+            All arrays are float32 numpy arrays detached from the computation graph.
+            Q, K, V matrices project input vectors to query/key/value vectors.
+            O matrix projects each head's output back to the full model dimension.
+
+            Note: Shape convention matches extract_projection_weights_Chronos for
+            consistency across different model architectures.
+
+    NOTE: we adopt the convention that all per-head projection matrices are of shape (head_dim, d_model),
+    where head_dim = d_model // num_heads. This could be confusing when looking at the mathematical form of the attention operation
+
+    Example:
+        >>> WQ, WK, WV, WO = extract_projection_weights_Moirai(
+        ...     model, selected_layer=2, selected_head=5
+        ... )
+        >>> print(f"Query weights shape: {WQ.shape}")  # e.g., (64, 768)
+        >>> print(f"Key weights shape: {WK.shape}")    # e.g., (64, 768)
+        >>> print(f"Value weights shape: {WV.shape}")  # e.g., (64, 768)
+        >>> print(f"Output weights shape: {WO.shape}") # e.g., (64, 768)
+    """
+
+    # Access the self-attention layer
+    attn_layer = model.module.encoder.layers[selected_layer].self_attn  # type: ignore
+
+    # Get separate projection layers
+    q_proj = attn_layer.q_proj  # type: ignore
+    k_proj = attn_layer.k_proj  # type: ignore
+    v_proj = attn_layer.v_proj  # type: ignore
+    out_proj = attn_layer.out_proj  # type: ignore
+
+    # Get weights - shape is (out_features, in_features) = (768, 768)
+    wQ = q_proj.weight  # (d_model, d_model)
+    wK = k_proj.weight  # (d_model, d_model)
+    wV = v_proj.weight  # (d_model, d_model)
+    wO = out_proj.weight  # (d_model, d_model)
+
+    d_model = wQ.shape[1]  # in_features
+
+    # Determine head_dim from q_norm.normalized_shape and compute num_heads
+    # q_norm has normalized_shape=(head_dim,), so head_dim = q_norm.normalized_shape[0]
+    head_dim: int = attn_layer.q_norm.normalized_shape[0]  # type: ignore
+    num_heads = d_model // head_dim
+
+    if verbose:
+        print(f"num_heads: {num_heads}")
+        print(f"d_model: {d_model}, head_dim: {head_dim}")
+        print(f"wQ shape: {wQ.shape}, wK shape: {wK.shape}, wV shape: {wV.shape}")
+        print(f"wO shape: {wO.shape}")
+
+    # Transpose to get (in_features, out_features) = (d_model, d_model)
+    wQ_T = wQ.T  # (768, 768)
+    wK_T = wK.T
+    wV_T = wV.T
+    wO_T = wO.T
+
+    # Split along output dimension (dim=1) into num_heads chunks
+    # Each will be (d_model, head_dim) = (768, 64)
+    wQ_heads = wQ_T.chunk(num_heads, dim=1)  # List of num_heads tensors, each (768, 64)
+    wK_heads = wK_T.chunk(num_heads, dim=1)
+    wV_heads = wV_T.chunk(num_heads, dim=1)
+    # For wO, split along input dimension (dim=0) since it processes concatenated head outputs
+    wO_heads = wO_T.chunk(num_heads, dim=0)  # List of num_heads tensors, each (64, 768)
+
+    # Extract weights for selected head
+    # Transpose Q, K, V to match (head_dim, d_model) convention used in extract_projection_weights_Chronos
+    selected_head_WQ = wQ_heads[selected_head].T.float().detach().cpu().numpy()
+    selected_head_WK = wK_heads[selected_head].T.float().detach().cpu().numpy()
+    selected_head_WV = wV_heads[selected_head].T.float().detach().cpu().numpy()
+    # O is already (head_dim, d_model) after chunking dim=0, no transpose needed
+    selected_head_WO = wO_heads[selected_head].float().detach().cpu().numpy()
+
+    if verbose:
+        print(f"\nNumber of Q heads: {len(wQ_heads)}")
+        print(f"Shape of each Q head (before transpose): {wQ_heads[0].shape}")
+        print(f"Number of K heads: {len(wK_heads)}")
+        print(f"Shape of each K head (before transpose): {wK_heads[0].shape}")
 
         print(f"wQ[head {selected_head}] shape (after transpose): {selected_head_WQ.shape}")
         print(f"wK[head {selected_head}] shape (after transpose): {selected_head_WK.shape}")

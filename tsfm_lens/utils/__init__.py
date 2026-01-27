@@ -12,7 +12,6 @@ from .data_utils import (
     safe_standardize,
 )
 from .eval_utils import (
-    calculate_rmse,
     clear_cuda_cache,
     combine_metrics_dicts,
     left_pad_and_stack_1D,
@@ -31,6 +30,7 @@ from .interp_utils import (
     compute_logit_metrics,
     diagnose_attention,
     extract_projection_weights_Chronos,
+    extract_projection_weights_Moirai,
     extract_projection_weights_TimesFM2p5,
     extract_projection_weights_Toto,
     peak_count_prominence,

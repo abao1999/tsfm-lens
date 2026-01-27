@@ -127,65 +127,6 @@ def validate_and_get_sample_count(
     return actual_num_samples
 
 
-def calculate_rmse(
-    predictions: np.ndarray,
-    true_vals: np.ndarray,
-    corrected_timesteps: np.ndarray,
-    verbose: bool = False,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Calculate RMSE between median prediction and true values, excluding corrected timesteps.
-
-    Args:
-        predictions: predictions of shape (batch_size, num_samples, num_timepoints)
-        true_vals: Ground truth values of shape (batch_size, num_timepoints)
-        corrected_timesteps: Boolean mask indicating which timesteps were corrected, of shape (num_timepoints,)
-
-    Returns:
-        Tuple containing:
-        - RMSE value (float)
-        - Standard deviation of sample errors (float)
-
-    Note:
-        Returns (0, 0) if no non-corrected timesteps exist (i.e. all timesteps were corrected).
-    """
-    batch_size, num_samples, num_timepoints = predictions.shape
-    assert num_timepoints == true_vals.shape[-1] == len(corrected_timesteps), "Mismatch in number of timepoints"
-
-    if not np.any(~corrected_timesteps):
-        return np.zeros(batch_size), np.zeros(batch_size)
-
-    # shape (batch_size, num_timesteps)
-    median_pred = np.median(predictions, axis=1)
-
-    # shape (batch_size,)
-    rmse = np.sqrt(
-        np.mean(
-            (median_pred[:, ~corrected_timesteps] - true_vals[:, ~corrected_timesteps]) ** 2,
-            axis=-1,
-        )
-    )
-
-    # shape (batch_size, num_samples)
-    sample_errors = np.sqrt(
-        np.mean(
-            (predictions[:, :, ~corrected_timesteps] - true_vals[:, None, ~corrected_timesteps]) ** 2,
-            axis=-1,
-        )
-    )
-    assert sample_errors.shape == (batch_size, num_samples), "Sample errors shape mismatch"
-
-    rmse_std_val = np.std(sample_errors, axis=-1)
-
-    if verbose:
-        print(f"RMSE shape: {rmse.shape}")
-        print(f"RMSE std val shape: {rmse_std_val.shape}")
-
-    assert rmse.shape == rmse_std_val.shape == (batch_size,), "RMSE and RMSE std val shape mismatch"
-
-    return rmse, rmse_std_val
-
-
 def left_pad_and_stack_1D(tensors: list[torch.Tensor]) -> torch.Tensor:
     """
     Left pad a list of 1D tensors to the same length and stack them.

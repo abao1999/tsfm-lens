@@ -19,7 +19,7 @@ Step 3:
 Step 4:
 `uv pip install gluonts==0.15.1`
 
-Crucially, we benchmark on `Gift-Eval`, which requires `pandas==2.0.0` and also `gluonts==0.15.1`. The latter requirement gets over-ridden when installing Moirai (uni2ts) from the tsfms group. For this reason, Step 4 is crucial, for running the ablation evaluation on gift-eval.
+Crucially, we benchmark on `Gift-Eval`, which requires `pandas==2.0.0` and also `gluonts==0.15.1`. The latter requirement gets overridden when installing Moirai (`uni2ts`) from the tsfms group. For this reason, Step 4 enables running the ablation evaluations on `Gift-Eval`. The installation of Moirai also downgrades other dependencies, notably downgrading CUDA version 12.6 to version 12.1, but this does not present an issue for us.
 
 To fetch and initialize the timesfm submodule:
 ```
@@ -45,3 +45,5 @@ This uses `.pre-commit-config.yaml` (nbstripout) to clear `*.ipynb` outputs on c
 ### TODOs:
 + TimesFM 2.5 doesn't work when not cuda:0 i.e. when gpu index is not 0. The predictions flatline.
 + Make the circuitlens `add_ablation_hooks_explicit` function signature more intuitive
++ For QOL, add a field to each model's CircuitLens class to store the model width (embedding dimension)
++ Find out how Gift-Eval repo computes CRPS, should be using MeanWeightedSumQuantileLoss

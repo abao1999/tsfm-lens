@@ -40,7 +40,7 @@ rseeds=(42)
 ablated_components="[head]"
 
 # TODO: use ablated_components as the switch instead i.e. ablated_components == "null" means do original evaluation
-head_selection_strategy="null" # "null" to disable ablations
+head_selection_strategy="srank" # "null" to disable ablations
 
 model_type="moirai"
 
@@ -49,11 +49,14 @@ model_type="moirai"
 declare -A target_ablations
 # 1, ..., max_num_heads, null
 num_heads_str="$(seq -s ' ' 1 11) null"
-for layer in {0..11}; do
+layer_lst=(0)
+# for layer in {0..11}; do
+for layer in "${layer_lst[@]}"; do
     target_ablations[$layer]="$num_heads_str"
 done
 
 if [ "$head_selection_strategy" != "null" ]; then
+    echo "target_ablations keys: ${!target_ablations[*]}"
     echo "target_ablations: ${target_ablations[*]}"
 fi
 
@@ -65,7 +68,7 @@ declare -A model_names=(
     ["chronos_bolt"]="amazon/chronos-bolt-base"
     ["chronos"]="amazon/chronos-t5-base"
     ["toto"]="Datadog/Toto-Open-Base-1.0"
-    ["moirai"]="Salesforce/moirai-1.1-R-small"
+    ["moirai"]="Salesforce/moirai-1.1-R-base"
 )
 
 model_name="${model_names[$model_type]}"
@@ -77,19 +80,24 @@ fi
 
 model_name_str="${model_name//\//-}"
 
+toto_num_samples=20
+moirai_num_samples=100
+chronos_num_samples=20
 # Model-specific arguments
 declare -A model_args_map=(
     ["chronos_bolt"]="chronos_bolt.model_id=${model_name} chronos_bolt.limit_prediction_length=false"
-    ["chronos"]="chronos.model_id=${model_name} chronos.limit_prediction_length=false chronos.num_samples=10 chronos.deterministic=false"
+    ["chronos"]="chronos.model_id=${model_name} chronos.limit_prediction_length=false chronos.num_samples=${chronos_num_samples} chronos.deterministic=false"
     ["timesfm"]="timesfm.model_id=${model_name}"
-    ["toto"]="toto.model_id=${model_name} toto.samples_per_batch=20 toto.use_kv_cache=true toto.pad_short_series=false"
-    ["moirai"]="moirai.model_id=${model_name} moirai.patch_size=32 moirai.num_samples=20"
+    ["toto"]="toto.model_id=${model_name} toto.samples_per_batch=${toto_num_samples} toto.use_kv_cache=true toto.pad_short_series=false"
+    ["moirai"]="moirai.model_id=${model_name} moirai.patch_size=32 moirai.num_samples=${moirai_num_samples}"
 )
 
-# Special handling for toto: append samples_per_batch to model_name_str
-if [ "$model_type" = "toto" ]; then
-    model_name_str="${model_name_str}_samples-20"
-fi
+# Append num_samples to model_name_str for models that use sampling
+case "$model_type" in
+    toto)    model_name_str="${model_name_str}_samples-${toto_num_samples}" ;;
+    chronos) model_name_str="${model_name_str}_samples-${chronos_num_samples}" ;;
+    moirai)  model_name_str="${model_name_str}_samples-${moirai_num_samples}" ;;
+esac
 
 read -ra model_args <<< "${model_args_map[$model_type]}"
 
@@ -99,7 +107,7 @@ read -ra model_args <<< "${model_args_map[$model_type]}"
 base_args=(
     eval.dataset_name=gift-eval
     eval.data_dir="${data_dir}"
-    eval.gift_eval.dataset_names=null
+    eval.gift_eval.dataset_names=null # NOTE: null is default (all datasets), but for testing/debugging, can specify a set of datasets e.g. ['bizitobs_service']
     eval.gift_eval.max_num_datasets="${max_datasets}"
     eval.gift_eval.term="${term}"
     eval.gift_eval.to_univariate=false

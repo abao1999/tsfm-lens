@@ -150,7 +150,7 @@ def load_model(
         "toto": lambda: CircuitLensToto(cfg.toto.model_id, device_map=device_map),
         "moirai": lambda: CircuitLensMoirai(
             cfg.moirai.model_id,
-            context_length=4000,
+            context_length=4000,  # NOTE: this is what the Moirai 1.1 was trained with
             prediction_length=1,  # NOTE: this is arbitrary, just a placeholder
             patch_size=cfg.moirai.patch_size,  # NOTE: try "auto". This can also be replaced in .predict() method
             num_samples=cfg.moirai.num_samples,  # NOTE: this is a placeholder, can be replaced in .predict() method
@@ -180,28 +180,52 @@ def setup_ablations_by_strategy(
     Configure ablation hooks on the model pipeline based on the specified strategy.
 
     Selects which attention heads to ablate using one of several strategies, then
-    registers ablation hooks on the pipeline. Supports both ranking-based selection
-    (using precomputed srank or alignment scores) and random selection.
+    registers ablation hooks on the pipeline. Supports ranking-based selection
+    (using precomputed srank or alignment scores), random selection, and full-layer
+    ablation.
+
+    The function first clears any existing hooks and attribution state, then selects
+    heads according to the strategy and registers new ablation hooks.
 
     Args:
-        pipeline: The CircuitLens model pipeline to configure ablations on.
-        ablations_layers_lst: List of layer indices to ablate (None to skip ablations).
-        ablations_types: List of component types to ablate (e.g., ["head"]).
-        ablate_n_heads_per_layer: Number of heads to ablate per layer (None for all).
-        head_selection_strategy: One of:
-            - "random": Random head selection (seeded by rseed)
-            - "srank": Select heads with lowest stable rank (least important)
-            - "srank_reverse": Select heads with highest srank (most important)
-            - "alignment": Select heads with highest alignment scores
-            - "alignment_reverse": Select heads with lowest alignment scores
-        rseed: Random seed for reproducible random selection.
+        pipeline: The CircuitLens model pipeline to configure ablations on. Must have
+            `num_heads` attribute and `add_ablation_hooks_explicit` method.
+        ablations_layers_lst: List of layer indices to ablate. If None, no ablations
+            are configured and the function returns None early.
+        ablations_types: List of component types to ablate (e.g., ["head"], ["mlp"],
+            or ["head", "mlp"]).
+        ablate_n_heads_per_layer: Number of heads to ablate per layer. If None,
+            all heads in the specified layers are ablated.
+        head_selection_strategy: Strategy for selecting which heads to ablate:
+            - "random": Randomly select heads using `rseed` for reproducibility.
+            - "srank": Select heads with lowest stable rank scores (least important
+              heads, as low srank indicates less complex/useful representations).
+            - "srank_reverse": Select heads with highest stable rank scores (most
+              important heads).
+            - "alignment": Select heads with highest alignment scores (most aligned
+              with the task).
+            - "alignment_reverse": Select heads with highest alignment scores.
+              Note: Currently behaves identically to "alignment" due to implementation.
+            - "all_components": Ablate all heads in the specified layers (equivalent
+              to setting `ablate_n_heads_per_layer=None` with any strategy).
+        rseed: Random seed for reproducible head selection when using "random" strategy.
 
     Returns:
-        A string describing the ablation configuration (e.g., "head_layers_1-2_heads-10"),
-        or None if no ablations are configured.
+        A string describing the ablation configuration in the format
+        "{types}_layers_{layer_ids}_heads-{n_heads}", e.g., "head_layers_1-2_heads-10"
+        or "head-mlp_layers_0-1-2_heads-all". Returns None if `ablations_layers_lst`
+        is None.
 
     Raises:
-        ValueError: If the required ranking file is not found for srank/alignment strategies.
+        ValueError: If the required ranking file is not found for srank/alignment
+            strategies. Ranking files are expected at:
+            `{ASSETS_DIR}/{PipelineClassName}_{ranking_type}_low_to_high_by_layer.json`
+        ValueError: If an invalid `head_selection_strategy` is provided.
+
+    Note:
+        For ranking-based strategies (srank, alignment), the ranking files must contain
+        a JSON dict mapping layer indices (as strings) to dicts of head indices and
+        their scores, ordered from lowest to highest score.
     """
     if ablations_layers_lst is None:
         logger.info("No ablations configured")
@@ -249,14 +273,26 @@ def setup_ablations_by_strategy(
             if reverse:
                 head_list = head_list[::-1]
             heads_to_ablate.extend((int(layer), int(h)) for h in head_list[:n_heads])
+    elif strategy == "all_components":
+        # NOTE: this is only relevant if "head" is in ablations_types
+        heads_to_ablate = [(layer, h) for layer in layers for h in range(pipeline.num_heads)]
     else:
         raise ValueError(f"Invalid strategy: {strategy}")
 
-    logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
+    if "head" in ablations_types:
+        logger.info(f"{len(heads_to_ablate)} heads to ablate: {heads_to_ablate}")
+    else:
+        logger.info("Since 'head' is not in ablations_types, no heads will be ablated")
+
+    if "mlp" in ablations_types:
+        logger.info(f"Ablating MLPs in layers: {layers}")
+    else:
+        logger.info("Since 'mlp' is not in ablations_types, no MLPs will be ablated")
+
     pipeline.add_ablation_hooks_explicit(
         ablations_types=ablations_types,
-        layers_to_ablate_mlp=layers,
-        heads_to_ablate=heads_to_ablate,
+        layers_to_ablate_mlp=layers,  # NOTE that this is only relevant if "mlp" is in ablations_types
+        heads_to_ablate=heads_to_ablate,  # NOTE again that this is only relevant if "head" is in ablations_types
     )
 
     return f"{'-'.join(ablations_types)}_layers_{'-'.join(map(str, layers))}_heads-{n_heads or 'all'}"
@@ -520,16 +556,24 @@ def run_standard_evaluation(
         data loss if evaluation is interrupted. Multivariate datasets are
         automatically converted to univariate if needed.
     """
+    # Extra safety
+    if model_type == "toto":
+        raise ValueError("Use run_toto_evaluation() for Toto models")
+
     logger.info(f"Running standard evaluation with batch size: {batch_size}")
     with open(csv_path, "w", newline="") as f:
         csv.writer(f).writerow(row_header)
 
     for ds_name in tqdm(selected_dataset_names, desc="Evaluating datasets"):
+        suggested_batch_size = batch_size
         for term in get_dataset_terms(ds_name, selected_term, medium_long_datasets):
+            # NOTE: a bit of extra redundancy here, for safety
+            suggested_batch_size = batch_size
             ds_key, ds_freq = parse_dataset_key(ds_name, dataset_properties_map)
+            logger.info(f"Forecasting on dataset: {ds_name}, term: {term}, key: {ds_key}, freq: {ds_freq}")
 
+            # option for univariate conversion, set by cfg.eval.gift_eval.to_univariate
             to_univariate = cfg.eval.gift_eval.to_univariate
-
             if model_type not in ["moirai", "moirai2"]:
                 # NOTE: since Moirai supports multivariate time series forecast, there is no need to convert the original data into univariate
                 # Check if univariate conversion needed
@@ -540,8 +584,9 @@ def run_standard_evaluation(
                         ).target_dim
                         != 1
                     )
-
             dataset = GiftEvalDataset(name=ds_name, term=term, to_univariate=to_univariate, data_dir=cfg.eval.data_dir)
+            # NOTE: for debugging, set a breakpoint here, and in the pdb debugger:
+            # from itertools import islice; context_target = next(islice(dataset.test_data.input, 0, 1))["target"]
 
             # Create predictor
             if model_type == "timesfm":
@@ -555,27 +600,56 @@ def run_standard_evaluation(
                 pipeline.model.hparams.prediction_length = dataset.prediction_length
                 pipeline.model.hparams.target_dim = dataset.target_dim
                 pipeline.model.hparams.past_feat_dynamic_real_dim = dataset.past_feat_dynamic_real_dim
+                # NOTE: context_length is stored in pipeline.context_length
+                # and model width (embedding_dim) is stored in pipeline.model.module.mask_encoding.embedding_dim
 
+                set_seed(cfg.eval.rseed)
                 predictor = pipeline.model.create_predictor(
-                    batch_size=512, device=pipeline.model.device
+                    batch_size=suggested_batch_size, device=pipeline.model.device
                 )  # NOTE: this is hardcoded following the Moirai Gift-Eval example notebook
-
-            elif model_type == "toto":
-                raise ValueError("Use run_toto_evaluation() for Toto models")
+                # NOTE: we can double check the past_length (context length) for this predictor by inspecting:
+                # predictor.__init_args__["input_transform"].__init_passed_kwargs__["transformations"]
             else:
                 raise NotImplementedError(f"Predictor not implemented for model type: {model_type}")
 
-            # Evaluate
-            res = evaluate_model(
-                predictor,  # type: ignore[arg-type]
-                test_data=dataset.test_data,
-                metrics=METRICS,
-                batch_size=batch_size,  # default batch size is 1024
-                axis=None,
-                mask_invalid_label=True,
-                allow_nan_forecast=False,
-                seasonality=get_seasonality(dataset.freq),  # season length
-            )
+            # Evaluate with OOM retry logic
+            # NOTE: evaluate_model is from gluonts: https://ts.gluon.ai/dev/_modules/gluonts/model/evaluation.html#evaluate_model
+            while True:
+                try:
+                    res = evaluate_model(
+                        predictor,  # type: ignore[arg-type]
+                        test_data=dataset.test_data,
+                        metrics=METRICS,
+                        batch_size=suggested_batch_size,  # default batch size is 1024
+                        axis=None,
+                        mask_invalid_label=True,
+                        allow_nan_forecast=False,
+                        seasonality=get_seasonality(dataset.freq),  # season length
+                    )
+                    break  # Success, exit retry loop
+                except RuntimeError as e:
+                    # Keep halving batch size while > 4 on OOM errors
+                    if "out of memory" in str(e) and suggested_batch_size > 4:
+                        # extra safety check to ensure the batch size is not too small
+                        if suggested_batch_size <= 4:
+                            logger.error(f"Batch size {suggested_batch_size} is too small, cannot reduce further")
+                            raise e
+
+                        logger.warning(f"OOM at batch size {suggested_batch_size}, reducing...")
+                        suggested_batch_size //= 2
+                        logger.info(f"New batch size: {suggested_batch_size}")
+
+                        # Recreate predictor with new batch size for Moirai
+                        if model_type == "moirai":
+                            set_seed(cfg.eval.rseed)
+                            predictor = pipeline.model.create_predictor(
+                                batch_size=suggested_batch_size, device=pipeline.model.device
+                            )
+                        # Continue to retry with smaller batch size
+                    else:
+                        if "out of memory" in str(e):
+                            logger.error(f"OOM at minimum batch size {suggested_batch_size}, cannot reduce further")
+                        raise e
 
             # Build result row
             ds_props = dataset_properties_map[ds_key]
@@ -627,7 +701,7 @@ def main(cfg):
 
     # NOTE: setup_ablations* modifies the pipeline in-place by adding the ablations hooks
     ablations_name = None
-    output_subdir_name = "original"
+    output_subdir_name = f"original_rseed-{cfg.eval.rseed}"
     if head_selection_strategy is None:
         logger.info("Skipping ablations")
         pass
@@ -642,7 +716,18 @@ def main(cfg):
         )
         output_subdir_name = f"heads1pp_rseed-{cfg.eval.rseed}"
 
-    elif head_selection_strategy in ["random", "srank", "srank_reverse", "alignment", "alignment_reverse"]:
+    elif head_selection_strategy in [
+        "random",
+        "srank",
+        "srank_reverse",
+        "alignment",
+        "alignment_reverse",
+        "all_components",
+    ]:
+        if head_selection_strategy == "all_components":
+            assert cfg.ablation.ablate_n_heads_per_layer is None, (
+                "if using all_components, ablate_n_heads_per_layer must be None (meaning ablate all heads per layer)"
+            )
         logger.info(f"Ablating by {head_selection_strategy}")
         ablations_name = setup_ablations_by_strategy(
             pipeline,
@@ -656,8 +741,8 @@ def main(cfg):
         if not cfg.ablation.model_name_str:
             raise ValueError("model_name_str is required")
 
-        strategy_prefix = {s: f"{s}_" for s in ["alignment", "alignment_reverse", "srank", "srank_reverse", "random"]}
-        output_subdir_name = f"{strategy_prefix[head_selection_strategy]}rseed-{cfg.eval.rseed}"
+        strategy_prefix = f"{head_selection_strategy}_"
+        output_subdir_name = f"{strategy_prefix}rseed-{cfg.eval.rseed}"
     else:
         raise ValueError(f"Invalid head selection strategy: {head_selection_strategy}")
 

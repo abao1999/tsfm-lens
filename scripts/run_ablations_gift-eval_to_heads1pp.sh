@@ -34,6 +34,7 @@ gpu_index=1
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
+batch_size=1024
 
 # Ablation grid parameters (bash arrays)
 rseeds=(42)
@@ -54,29 +55,40 @@ head_selection_strategy="heads1pp"
 # layers_to_keep_at_heads1pp=(7 8 9 10 11 12 13)
 # echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
 
+model_type="toto"
 
-model_type="chronos_bolt"
-
-chosen_layers=($(seq 1 4))
-# chosen_layers=($(seq 1 8))
-# chosen_layers=($(seq 2 5))
-# chosen_layers=(7 8 9 10 11 12 13)
+chosen_layers=(1 2 3 4 5 6 7 8 9 10 11)
 echo "chosen_layers: ${chosen_layers[*]}"
-# chosen_layers_mlp=($(seq 3 8))
-# chosen_layers_mlp=($(seq 2 6))
-# chosen_layers_mlp=($(seq 1 4))
-# chosen_layers_mlp=($(seq 3 6))
-# chosen_layers_mlp=($(seq 1 6))
-chosen_layers_mlp=($(seq 1 6))
+chosen_layers_mlp=()
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
-num_heads_per_layer_to_skip=0
+num_heads_per_layer_to_skip=3
 echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-# layers_to_keep_at_heads1pp=()
-# layers_to_keep_at_heads1pp=($(seq 1 5))
-layers_to_keep_at_heads1pp=($(seq 1 4))
-# layers_to_keep_at_heads1pp=($(seq 2 5))
+layers_to_keep_at_heads1pp=(2 9 10 11)
 echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
+
+# model_type="chronos_bolt"
+
+# chosen_layers=($(seq 1 4))
+# # chosen_layers=($(seq 1 8))
+# # chosen_layers=($(seq 2 5))
+# # chosen_layers=(7 8 9 10 11 12 13)
+# echo "chosen_layers: ${chosen_layers[*]}"
+# # chosen_layers_mlp=($(seq 3 8))
+# # chosen_layers_mlp=($(seq 2 6))
+# # chosen_layers_mlp=($(seq 1 4))
+# # chosen_layers_mlp=($(seq 3 6))
+# # chosen_layers_mlp=($(seq 1 6))
+# chosen_layers_mlp=($(seq 1 6))
+# echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
+
+# num_heads_per_layer_to_skip=0
+# echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
+# # layers_to_keep_at_heads1pp=()
+# # layers_to_keep_at_heads1pp=($(seq 1 5))
+# layers_to_keep_at_heads1pp=($(seq 1 4))
+# # layers_to_keep_at_heads1pp=($(seq 2 5))
+# echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
 
 # =============================================================================
 # MODEL SETUP
@@ -97,18 +109,24 @@ fi
 
 model_name_str="${model_name//\//-}"
 
+toto_num_samples=20
+moirai_num_samples=100
+chronos_num_samples=20
 # Model-specific arguments
 declare -A model_args_map=(
     ["chronos_bolt"]="chronos_bolt.model_id=${model_name} chronos_bolt.limit_prediction_length=false"
-    ["chronos"]="chronos.model_id=${model_name} chronos.limit_prediction_length=false chronos.num_samples=10 chronos.deterministic=false"
+    ["chronos"]="chronos.model_id=${model_name} chronos.limit_prediction_length=false chronos.num_samples=${chronos_num_samples} chronos.deterministic=false"
     ["timesfm"]="timesfm.model_id=${model_name}"
-    ["toto"]="toto.model_id=${model_name} toto.samples_per_batch=20 toto.use_kv_cache=true toto.pad_short_series=false"
+    ["toto"]="toto.model_id=${model_name} toto.samples_per_batch=${toto_num_samples} toto.use_kv_cache=true toto.pad_short_series=false"
+    ["moirai"]="moirai.model_id=${model_name} moirai.patch_size=32 moirai.num_samples=${moirai_num_samples}"
 )
 
-# Special handling for toto: append samples_per_batch to model_name_str
-if [ "$model_type" = "toto" ]; then
-    model_name_str="${model_name_str}_samples-20"
-fi
+# Append num_samples to model_name_str for models that use sampling
+case "$model_type" in
+    toto)    model_name_str="${model_name_str}_samples-${toto_num_samples}" ;;
+    chronos) model_name_str="${model_name_str}_samples-${chronos_num_samples}" ;;
+    moirai)  model_name_str="${model_name_str}_samples-${moirai_num_samples}" ;;
+esac
 
 read -ra model_args <<< "${model_args_map[$model_type]}"
 
@@ -118,12 +136,13 @@ read -ra model_args <<< "${model_args_map[$model_type]}"
 base_args=(
     eval.dataset_name=gift-eval
     eval.data_dir="${data_dir}"
-    eval.gift_eval.dataset_names=null
+    eval.gift_eval.dataset_names=null # NOTE: null is default (all datasets), but for testing/debugging, can specify a set of datasets e.g. ['bizitobs_service']
     eval.gift_eval.max_num_datasets="${max_datasets}"
     eval.gift_eval.term="${term}"
     eval.gift_eval.to_univariate=false
     eval.device="cuda:${gpu_index}"
     eval.results_save_dir="${HOME}/tsfm-lens/results"
+    eval.batch_size="${batch_size}"
     ablation.model_name_str="${model_name_str}"
     ablation.model_type="${model_type}"
 )

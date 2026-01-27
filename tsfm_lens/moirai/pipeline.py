@@ -135,6 +135,8 @@ class MoiraiPipelineCustom:
         actual_pred_len = prediction_length or self.model.hparams.prediction_length
         actual_num_samples = num_samples or self.model.hparams.num_samples
         actual_patch_size: int | str = patch_size or self.model.hparams.patch_size
+
+        # TODO: we want to make this more flexible
         actual_target_dim = context.size(-1)
         actual_batch_size = context.size(0)
 
