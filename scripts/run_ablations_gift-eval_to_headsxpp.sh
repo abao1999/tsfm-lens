@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# run_ablations_gift-eval_to_heads1pp.sh - Run "heads at 1pp" ablation evaluations on GIFT-Eval
+# run_ablations_gift-eval_to_headsxpp.sh - Run "heads at xpp" ablation evaluations on GIFT-Eval
 #
 # Description:
-#   Runs ablation experiments using the "heads at 1 principal component" (heads1pp) strategy.
+#   Runs ablation experiments using the "heads at 1 principal component" (headsxpp) strategy.
 #   This mode loads precomputed head ablation configs from a JSON file and applies them to
-#   bring attention heads to 1pp performance. Optionally skips the last N heads per layer
+#   bring attention heads to xpp performance. Optionally skips the last N heads per layer
 #   to preserve some capacity, except for protected layers.
 #
 # Configuration:
@@ -16,12 +16,12 @@
 #   chosen_layers                - Array of layer indices to include in head ablation
 #   chosen_layers_mlp            - Array of layer indices for MLP ablation
 #   num_heads_per_layer_to_skip  - Number of heads to skip (keep active) per layer
-#   layers_to_keep_at_heads1pp   - Layers where all heads are ablated (no skipping)
+#   layers_to_keep_at_headsxpp   - Layers where all heads are ablated (no skipping)
 #   term                         - GIFT-Eval term filter (short, medium, long, all)
 #   max_datasets                 - Maximum number of datasets to evaluate (null for all)
 #
 # Usage:
-#   ./scripts/run_ablations_gift-eval_to_heads1pp.sh
+#   ./scripts/run_ablations_gift-eval_to_headsxpp.sh
 #
 
 set -e
@@ -30,65 +30,29 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=1
+gpu_index=2
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
 batch_size=1024
 
-# Ablation grid parameters (bash arrays)
 rseeds=(42)
 ablated_components="[head,mlp]"
 
-head_selection_strategy="heads1pp"
+head_selection_strategy="headsxpp"
+threshold_pct=1.0
 
-# model_type="timesfm"
+model_type="moirai"
 
-# chosen_layers=($(seq 0 19))
-# # chosen_layers=(7 8 9 10 11 12 13)
-# echo "chosen_layers: ${chosen_layers[*]}"
-# chosen_layers_mlp=(10 11)
-# echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
-
-# num_heads_per_layer_to_skip=1
-# echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-# layers_to_keep_at_heads1pp=(7 8 9 10 11 12 13)
-# echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
-
-model_type="toto"
-
-chosen_layers=(1 2 3 4 5 6 7 8 9 10 11)
+chosen_layers=(1 2 3 4 5)
 echo "chosen_layers: ${chosen_layers[*]}"
 chosen_layers_mlp=()
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
-num_heads_per_layer_to_skip=3
+num_heads_per_layer_to_skip=0
 echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-layers_to_keep_at_heads1pp=(2 9 10 11)
-echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
-
-# model_type="chronos_bolt"
-
-# chosen_layers=($(seq 1 4))
-# # chosen_layers=($(seq 1 8))
-# # chosen_layers=($(seq 2 5))
-# # chosen_layers=(7 8 9 10 11 12 13)
-# echo "chosen_layers: ${chosen_layers[*]}"
-# # chosen_layers_mlp=($(seq 3 8))
-# # chosen_layers_mlp=($(seq 2 6))
-# # chosen_layers_mlp=($(seq 1 4))
-# # chosen_layers_mlp=($(seq 3 6))
-# # chosen_layers_mlp=($(seq 1 6))
-# chosen_layers_mlp=($(seq 1 6))
-# echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
-
-# num_heads_per_layer_to_skip=0
-# echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-# # layers_to_keep_at_heads1pp=()
-# # layers_to_keep_at_heads1pp=($(seq 1 5))
-# layers_to_keep_at_heads1pp=($(seq 1 4))
-# # layers_to_keep_at_heads1pp=($(seq 2 5))
-# echo "layers_to_keep_at_heads1pp: ${layers_to_keep_at_heads1pp[*]}"
+layers_to_keep_at_headsxpp=()
+echo "layers_to_keep_at_headsxpp: ${layers_to_keep_at_headsxpp[*]}"
 
 # =============================================================================
 # MODEL SETUP
@@ -98,6 +62,7 @@ declare -A model_names=(
     ["chronos_bolt"]="amazon/chronos-bolt-base"
     ["chronos"]="amazon/chronos-t5-base"
     ["toto"]="Datadog/Toto-Open-Base-1.0"
+    ["moirai"]="Salesforce/moirai-1.1-R-base"
 )
 
 model_name="${model_names[$model_type]}"
@@ -164,7 +129,7 @@ echo "============================================"
 for rseed in "${rseeds[@]}"; do
     # Convert bash arrays to Hydra list format [a,b,c,...]
     chosen_layers_hydra="[$(IFS=,; echo "${chosen_layers[*]}")]"
-    layers_to_keep_hydra="[$(IFS=,; echo "${layers_to_keep_at_heads1pp[*]}")]"
+    layers_to_keep_hydra="[$(IFS=,; echo "${layers_to_keep_at_headsxpp[*]}")]"
     chosen_layers_mlp_hydra="[$(IFS=,; echo "${chosen_layers_mlp[*]}")]"
 
     python scripts/run_ablations_gift-eval.py \
@@ -173,10 +138,11 @@ for rseed in "${rseeds[@]}"; do
         eval.rseed="${rseed}" \
         ablation.ablations_types="${ablated_components}" \
         ablation.head_selection_strategy="${head_selection_strategy}" \
-        ablation.to_heads_at_1pp.chosen_layers="${chosen_layers_hydra}" \
-        ablation.to_heads_at_1pp.num_heads_per_layer_to_skip="${num_heads_per_layer_to_skip}" \
-        ablation.to_heads_at_1pp.layers_to_keep_at_heads1pp="${layers_to_keep_hydra}" \
-        ablation.to_heads_at_1pp.chosen_layers_mlp="${chosen_layers_mlp_hydra}" \
+        ablation.to_heads_at_xpp.threshold_pct="${threshold_pct}" \
+        ablation.to_heads_at_xpp.chosen_layers="${chosen_layers_hydra}" \
+        ablation.to_heads_at_xpp.num_heads_per_layer_to_skip="${num_heads_per_layer_to_skip}" \
+        ablation.to_heads_at_xpp.layers_to_keep_at_headsxpp="${layers_to_keep_hydra}" \
+        ablation.to_heads_at_xpp.chosen_layers_mlp="${chosen_layers_mlp_hydra}" \
         && wait
 
     echo ">>> Completed: seed=${rseed}"

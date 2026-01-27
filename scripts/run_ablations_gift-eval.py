@@ -181,7 +181,7 @@ def setup_ablations_by_strategy(
 
     Selects which attention heads to ablate using one of several strategies, then
     registers ablation hooks on the pipeline. Supports ranking-based selection
-    (using precomputed srank or alignment scores), random selection, and full-layer
+    (using precomputed srank scores), random selection, and full-layer
     ablation.
 
     The function first clears any existing hooks and attribution state, then selects
@@ -202,10 +202,6 @@ def setup_ablations_by_strategy(
               heads, as low srank indicates less complex/useful representations).
             - "srank_reverse": Select heads with highest stable rank scores (most
               important heads).
-            - "alignment": Select heads with highest alignment scores (most aligned
-              with the task).
-            - "alignment_reverse": Select heads with highest alignment scores.
-              Note: Currently behaves identically to "alignment" due to implementation.
             - "all_components": Ablate all heads in the specified layers (equivalent
               to setting `ablate_n_heads_per_layer=None` with any strategy).
         rseed: Random seed for reproducible head selection when using "random" strategy.
@@ -217,13 +213,13 @@ def setup_ablations_by_strategy(
         is None.
 
     Raises:
-        ValueError: If the required ranking file is not found for srank/alignment
+        ValueError: If the required ranking file is not found for srank
             strategies. Ranking files are expected at:
             `{ASSETS_DIR}/{PipelineClassName}_{ranking_type}_low_to_high_by_layer.json`
         ValueError: If an invalid `head_selection_strategy` is provided.
 
     Note:
-        For ranking-based strategies (srank, alignment), the ranking files must contain
+        For ranking-based strategies (srank), the ranking files must contain
         a JSON dict mapping layer indices (as strings) to dicts of head indices and
         their scores, ordered from lowest to highest score.
     """
@@ -252,20 +248,16 @@ def setup_ablations_by_strategy(
             for layer in layers:
                 selected = rng.choice(pipeline.num_heads, size=n_heads, replace=False)
                 heads_to_ablate.extend((layer, h) for h in selected)
-    elif strategy in ["srank", "srank_reverse", "alignment", "alignment_reverse"]:
-        # Load ranking file (srank or alignment)
-        ranking_type = "srank" if "srank" in strategy else "alignment"
-        ranking_path = os.path.join(
-            ASSETS_DIR, f"{pipeline.__class__.__name__}_{ranking_type}_low_to_high_by_layer.json"
-        )
+    elif strategy in ["srank", "srank_reverse"]:
+        # Load ranking file (srank)
+        ranking_path = os.path.join(ASSETS_DIR, f"{pipeline.__class__.__name__}_srank_low_to_high_by_layer.json")
         if not os.path.exists(ranking_path):
             raise ValueError(f"Ranking file not found: {ranking_path}")
-
-        logger.info(f"Loading {ranking_type} rankings from {ranking_path}")
+        logger.info(f"Loading srank rankings from {ranking_path}")
         rankings = json.load(open(ranking_path))
 
-        # Reverse order for "reverse" strategies or alignment (high-to-low)
-        reverse = strategy.endswith("_reverse") or strategy == "alignment"
+        # Reverse order for "reverse" strategies (high-to-low)
+        reverse = strategy.endswith("_reverse")
 
         heads_to_ablate = []
         for layer in layers:
@@ -331,32 +323,34 @@ def _get_ablations_summary_str(pipeline: BaseCircuitLens, heads_to_ablate: list[
     return ablations_summary_str
 
 
-def setup_ablations_to_heads_at_1pp(
+def setup_ablations_to_heads_at_xpp(
     pipeline: BaseCircuitLens,
+    threshold_pct: float,
     chosen_layers: list[int],
     num_heads_per_layer_to_skip: int,
-    layers_to_keep_at_heads1pp: list[int],
+    layers_to_keep_at_headsxpp: list[int],
     chosen_layers_mlp: list[int],
 ) -> str | None:
     """
-    Configure ablations to bring heads to 1 principal component (1pp) performance.
+    Configure ablations to bring heads to 1 principal component (xpp) performance.
 
     Loads precomputed head ablation configurations from a JSON file and applies them
     to the pipeline. The ablation list is filtered to only include the specified layers,
     then for each layer, the last `num_heads_per_layer_to_skip` heads are removed from
-    ablation (i.e., kept active) unless the layer is in `layers_to_keep_at_heads1pp`.
+    ablation (i.e., kept active) unless the layer is in `layers_to_keep_at_headsxpp`.
 
     Args:
         pipeline: The CircuitLens model pipeline to configure ablations on.
+        threshold_pct: Threshold percentage (e.g., 1 for 1pp, 0.5 for 0.5pp) to use for the heads@xpp ablation.
         chosen_layers: List of layer indices to include in the ablation.
         num_heads_per_layer_to_skip: Number of heads to skip (keep active) per layer.
-            If 0, all chosen layers are treated as layers to keep at heads1pp.
-        layers_to_keep_at_heads1pp: Layers where all heads from the JSON config should
+            If 0, all chosen layers are treated as layers to keep at headsxpp.
+        layers_to_keep_at_headsxpp: Layers where all heads from the JSON config should
             be ablated (no heads skipped).
         chosen_layers_mlp: List of layer indices for MLP ablation.
 
     Returns:
-        A string summarizing the ablation configuration (e.g., "heads1pp_ablate_N_heads_..."),
+        A string summarizing the ablation configuration (e.g., "headsxpp_ablate_N_heads_..."),
         or None if no ablations are configured.
 
     Note:
@@ -364,18 +358,21 @@ def setup_ablations_to_heads_at_1pp(
         Heads are grouped by layer and sorted, then the last `num_heads_per_layer_to_skip`
         heads are removed from each layer's ablation list (except for protected layers).
     """
-    heads_to_ablate = json.load(
-        open(os.path.join(ASSETS_DIR, f"{pipeline.__class__.__name__}_ablate_for_heads_at_1pp.json"))
+    threshold_pct_str = (
+        f"{int(threshold_pct) if int(threshold_pct) == threshold_pct else str(threshold_pct).replace('.', 'p')}"
     )
+    fname = f"{pipeline.__class__.__name__}_ablate_for_heads_at_{threshold_pct_str}pp.json"
+    logger.info(f"Loading {fname} from {ASSETS_DIR}")
+    heads_to_ablate = json.load(open(os.path.join(ASSETS_DIR, fname)))
     heads_to_ablate = [config for config in heads_to_ablate if config[0] in chosen_layers]
     if num_heads_per_layer_to_skip == 0:
-        layers_to_keep_at_heads1pp = chosen_layers
+        layers_to_keep_at_headsxpp = chosen_layers
 
     heads_to_ablate = [
         config
         for layer, group in groupby(sorted(heads_to_ablate, key=lambda x: x[0]), key=lambda x: x[0])
         for config in (
-            list(group) if layer in layers_to_keep_at_heads1pp else list(group)[:-num_heads_per_layer_to_skip]
+            list(group) if layer in layers_to_keep_at_headsxpp else list(group)[:-num_heads_per_layer_to_skip]
         )
     ]
 
@@ -399,19 +396,19 @@ def setup_ablations_to_heads_at_1pp(
     ablations_summary_str = _get_ablations_summary_str(pipeline, heads_to_ablate)
     logger.info(f"Ablations summary string: {ablations_summary_str}")
 
-    # We keep track of the additional flexibility to the heads@1pp ablation
+    # We keep track of the additional flexibility to the heads@xpp ablation
     extra_suffix = ""
     if num_heads_per_layer_to_skip > 0 and len(chosen_layers) > 0:
         logger.info(
-            f"Additional flexibility to the heads@1pp ablation: num_heads_per_layer_to_skip={num_heads_per_layer_to_skip}, layers_to_keep_at_heads1pp={'-'.join(map(str, layers_to_keep_at_heads1pp))}"
+            f"Additional flexibility to the heads@xpp ablation: num_heads_per_layer_to_skip={num_heads_per_layer_to_skip}, layers_to_keep_at_headsxpp={'-'.join(map(str, layers_to_keep_at_headsxpp))}"
         )
         extra_suffix = f"_num_heads_per_layer_to_skip-{num_heads_per_layer_to_skip}"
-        if layers_to_keep_at_heads1pp:
-            extra_suffix += f"_layers_to_keep_at_heads1pp-{'-'.join(map(str, layers_to_keep_at_heads1pp))}"
+        if layers_to_keep_at_headsxpp:
+            extra_suffix += f"_layers_to_keep_at_headsxpp-{'-'.join(map(str, layers_to_keep_at_headsxpp))}"
     ablations_summary_str += extra_suffix
     logger.info(f"Ablations summary string with extra suffix: {ablations_summary_str}")
 
-    return f"heads1pp_{ablations_summary_str}"
+    return f"heads{threshold_pct_str}pp_{ablations_summary_str}"
 
 
 class ChronosPredictor:
@@ -705,23 +702,23 @@ def main(cfg):
     if head_selection_strategy is None:
         logger.info("Skipping ablations")
         pass
-    elif head_selection_strategy == "heads1pp":
-        logger.info("Ablating to heads@1pp")
-        ablations_name = setup_ablations_to_heads_at_1pp(
+    elif head_selection_strategy == "headsxpp":
+        logger.info("Ablating to heads@xpp")
+        logger.info(f"Threshold percentage: {cfg.ablation.to_heads_at_xpp.threshold_pct}")
+        ablations_name = setup_ablations_to_heads_at_xpp(
             pipeline,
-            chosen_layers=cfg.ablation.to_heads_at_1pp.chosen_layers,
-            num_heads_per_layer_to_skip=cfg.ablation.to_heads_at_1pp.num_heads_per_layer_to_skip,
-            layers_to_keep_at_heads1pp=cfg.ablation.to_heads_at_1pp.layers_to_keep_at_heads1pp,
-            chosen_layers_mlp=cfg.ablation.to_heads_at_1pp.chosen_layers_mlp,
+            threshold_pct=cfg.ablation.to_heads_at_xpp.threshold_pct,
+            chosen_layers=cfg.ablation.to_heads_at_xpp.chosen_layers,
+            num_heads_per_layer_to_skip=cfg.ablation.to_heads_at_xpp.num_heads_per_layer_to_skip,
+            layers_to_keep_at_headsxpp=cfg.ablation.to_heads_at_xpp.layers_to_keep_at_headsxpp,
+            chosen_layers_mlp=cfg.ablation.to_heads_at_xpp.chosen_layers_mlp,
         )
-        output_subdir_name = f"heads1pp_rseed-{cfg.eval.rseed}"
+        output_subdir_name = f"headsxpp_rseed-{cfg.eval.rseed}"
 
     elif head_selection_strategy in [
         "random",
         "srank",
         "srank_reverse",
-        "alignment",
-        "alignment_reverse",
         "all_components",
     ]:
         if head_selection_strategy == "all_components":
