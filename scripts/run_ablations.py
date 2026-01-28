@@ -14,6 +14,7 @@ from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 from tsfm_lens.chronos_bolt.circuitlens import CircuitLensBolt
 from tsfm_lens.dataset import TestDataset
 from tsfm_lens.evaluation import evaluate_ablations
+from tsfm_lens.moirai.circuitlens import CircuitLensMoirai
 from tsfm_lens.timesfm.circuitlens import CircuitLensTimesFM
 from tsfm_lens.toto.circuitlens import CircuitLensToto
 from tsfm_lens.utils import (
@@ -124,6 +125,21 @@ def main(cfg):
             "samples_per_batch": cfg.toto.samples_per_batch,
             "use_kv_cache": cfg.toto.use_kv_cache,
         }
+        num_samples = prediction_kwargs["num_samples"]
+
+    elif model_type == "moirai":
+        pipeline = CircuitLensMoirai(
+            cfg.moirai.model_id,
+            context_length=4000,  # NOTE: this is what the Moirai 1.1 was trained with
+            prediction_length=1,  # NOTE: this is arbitrary, just a placeholder
+            patch_size=cfg.moirai.patch_size,  # NOTE: try "auto". This can also be replaced in .predict() method
+            num_samples=cfg.moirai.num_samples,  # NOTE: this is a placeholder, can be replaced in .predict() method
+            target_dim=1,
+            device=cfg.eval.device,
+        )
+
+        context_length = 4000
+        prediction_kwargs = {"num_samples": cfg.moirai.num_samples}
         num_samples = prediction_kwargs["num_samples"]
 
     else:

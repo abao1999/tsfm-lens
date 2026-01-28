@@ -10,17 +10,10 @@ eval:
   prediction_length: 512
 
   metric_names:
-    - smape
-    - wape
     - mase
-    - wql
     - spearman
     - pearson
     - ssim
-    - energy_distance
-    - spectral_hellinger
-    - spectral_wasserstein-1
-    - spectral_wasserstein-2
     - cross_spectral_phase_similarity
 
   split_coords: false

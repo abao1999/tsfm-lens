@@ -110,26 +110,39 @@ class MoiraiPipelineCustom:
 
         self.model.eval()
 
-        # Normalize inputs
-        if isinstance(context, (list, tuple)):
-            context = torch.stack(list(context), dim=0)
-        if context.dim() == 2:
-            context = context.unsqueeze(-1)
-        if context.dim() != 3:
-            raise ValueError(f"Expected context shape (batch, time) or (batch, time, dim); got {tuple(context.shape)}")
-
         device = next(self.model.parameters()).device
-        context = context.to(device)
-
-        # Align context length with the model expectation
         ctx_len = self.model.hparams.context_length
-        if context.size(1) < ctx_len:
-            pad = torch.zeros(
-                context.size(0), ctx_len - context.size(1), context.size(2), device=device, dtype=context.dtype
-            )
-            context = torch.cat([pad, context], dim=1)
-        elif context.size(1) > ctx_len:
-            context = context[:, -ctx_len:, :]
+
+        def _align_1d(t: torch.Tensor) -> torch.Tensor:
+            """Left-pad or right-truncate a 1D tensor to ctx_len."""
+            t = t.to(device)
+            diff = ctx_len - t.size(0)
+            if diff > 0:
+                return torch.cat([torch.zeros(diff, device=device, dtype=t.dtype), t])
+            return t[-ctx_len:] if diff < 0 else t
+
+        if isinstance(context, (list, tuple)):
+            # Flatten any 2D tensors to 1D, align each, then stack
+            tensors = []
+            for ctx in context:
+                if ctx.ndim == 2:
+                    tensors.extend(ctx[i] for i in range(ctx.shape[0]))
+                else:
+                    tensors.append(ctx.squeeze())
+            context = torch.stack([_align_1d(t) for t in tensors], dim=0).unsqueeze(-1)
+        else:
+            # Tensor input: ensure 3D shape (batch, time, dim)
+            if context.dim() == 2:
+                context = context.unsqueeze(-1)
+            if context.dim() != 3:
+                raise ValueError(f"Expected (batch, time) or (batch, time, dim); got {tuple(context.shape)}")
+            context = context.to(device)
+            diff = ctx_len - context.size(1)
+            if diff > 0:
+                pad = torch.zeros(context.size(0), diff, context.size(2), device=device, dtype=context.dtype)
+                context = torch.cat([pad, context], dim=1)
+            elif diff < 0:
+                context = context[:, -ctx_len:]
 
         # Handle overrides
         actual_pred_len = prediction_length or self.model.hparams.prediction_length
