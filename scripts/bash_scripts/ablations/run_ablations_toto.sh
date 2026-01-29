@@ -79,7 +79,7 @@ for ablation_types in "${ablation_types_lst[@]}"; do
         echo "ablations_layer_lst: $ABLATIONS_LAYER_LST"
         echo "run_name: $RUN_NAME"
 
-        python scripts/ablations.py \
+        python scripts/run_ablations.py \
             ablation.ablations_types="${ablation_types}" \
             ablation.ablations_layers_lst=${ABLATIONS_LAYER_LST} \
             ablation.ablate_n_heads_per_layer=${ablate_n_heads_per_layer} \

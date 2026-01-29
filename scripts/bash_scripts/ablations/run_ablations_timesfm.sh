@@ -13,9 +13,8 @@ ablation_types_input=$3
 n_consecutive_layers_input=$4
 ablate_n_heads_per_layer=$5
 gpu_index=$6
-
-# Optional arguments with defaults
-term=${7:-short}
+term=$7
+prediction_length=$8
 
 # Hardcoded window_start_time
 window_start_time=2512
@@ -31,9 +30,9 @@ if [ -z "$dataset_name" ] || [ -z "$num_test_instances" ] || [ -z "$ablation_typ
     echo "  n_consecutive_layers_lst          - Space-separated layer counts (e.g., '1 2 4 6' or '12')"
     echo "  ablate_n_heads_per_layer          - Number of heads to ablate per layer (use 'null' for all heads)"
     echo "  gpu_index                         - GPU index to use (e.g., 1 for cuda:1)"
+    echo "  term                              - Term to use (i.e. short, medium, long)"
+    echo "  prediction_length                 - Prediction length to use (we recommend multiple of 64 because of the evaluation setup)"
     echo ""
-    echo "Optional arguments:"
-    echo "  term                              - Term to use (default: short)"
     exit 1
 fi
 
@@ -78,7 +77,7 @@ for ablation_types in "${ablation_types_lst[@]}"; do
         echo "ablations_layer_lst: $ABLATIONS_LAYER_LST"
         echo "run_name: $RUN_NAME"
 
-        python scripts/ablations.py \
+        python scripts/run_ablations.py \
             ablation.ablations_types="${ablation_types}" \
             ablation.ablations_layers_lst=${ABLATIONS_LAYER_LST} \
             ablation.ablate_n_heads_per_layer=${ablate_n_heads_per_layer} \
@@ -86,7 +85,7 @@ for ablation_types in "${ablation_types_lst[@]}"; do
             ablation.model_name_str=${model_name_str} \
             timesfm.model_id=${model_name} \
             timesfm.context_length=512 \
-            eval.prediction_length=512 \
+            eval.prediction_length=${prediction_length} \
             eval.dataset_name=$dataset_name \
             eval.data_dir=$data_dir \
             eval.dysts.system_names=null \
