@@ -2731,6 +2731,8 @@ def compute_metrics(
 
                 # Complex metrics with specialized batched functions
                 else:
+                    if verbose:
+                        print(f"Computing {metric} with batched function")
                     batched_fn = batched_metric_map[metric]
 
                     if y_true_batch0.ndim == 2:
