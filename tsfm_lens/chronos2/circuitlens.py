@@ -8,8 +8,8 @@ import numpy as np
 import torch
 from torch.utils.hooks import RemovableHandle
 
-from tsfm_lens.circuitlens import BaseCircuitLens
 from tsfm_lens.chronos2.pipeline import Chronos2PipelineCustom
+from tsfm_lens.circuitlens import BaseCircuitLens
 
 
 @dataclass
@@ -202,9 +202,7 @@ class CircuitLensChronos2(Chronos2PipelineCustom, BaseCircuitLens):
         handles = self.time_head_ablation_handles if attention_type == "time" else self.group_head_ablation_handles
         for layer_idx, head_indices in heads_by_layer.items():
             block = self.model.encoder.block[layer_idx]  # type: ignore[attr-defined]
-            target = (
-                block.layer[0].self_attention.o if attention_type == "time" else block.layer[1].self_attention.o
-            )
+            target = block.layer[0].self_attention.o if attention_type == "time" else block.layer[1].self_attention.o
             hook = target.register_forward_hook(
                 partial(self._ablate_head_hook_fn, head_indices=head_indices, ablation_method=ablation_method)
             )

@@ -6,13 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+from chronos.chronos2 import Chronos2Model, Chronos2Pipeline
 
 # Ensure local checkout of chronos-forecasting is on path
 CHRONOS_PATH = Path(__file__).resolve().parents[2] / "external" / "chronos-forecasting" / "src"
 if CHRONOS_PATH.exists() and str(CHRONOS_PATH) not in sys.path:
     sys.path.insert(0, str(CHRONOS_PATH))
-
-from chronos.chronos2 import Chronos2Model, Chronos2Pipeline  # type: ignore
 
 
 @dataclass
@@ -93,7 +92,7 @@ class Chronos2PipelineCustom:
     def from_pretrained(
         cls,
         model_name: str,
-        device: str | torch.device = "cpu",
+        device: torch.device = torch.device("cpu"),
         **kwargs,
     ) -> Chronos2PipelineCustom:
         model = Chronos2Model.from_pretrained(model_name, **kwargs)  # type: ignore[attr-defined]

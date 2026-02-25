@@ -37,6 +37,11 @@ chronos_bolt:
   model_id: amazon/chronos-bolt-base
   context_length: 512
 
+chronos2:
+
+  model_id: amazon/chronos-2
+  context_length: 8192
+
 timesfm:
 
   model_id: google/timesfm-2.5-200m-pytorch

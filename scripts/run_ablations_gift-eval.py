@@ -7,6 +7,7 @@ import csv
 import json
 import logging
 import os
+import warnings
 from itertools import groupby
 from typing import Literal
 
@@ -37,6 +38,8 @@ from timesfm import configs
 from tqdm.auto import tqdm
 
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
+from tsfm_lens.chronos2.circuitlens import CircuitLensChronos2
+from tsfm_lens.chronos2.predictor import Chronos2Predictor, evaluate_on_dataset
 from tsfm_lens.chronos_bolt.circuitlens import CircuitLensBolt
 from tsfm_lens.circuitlens import BaseCircuitLens
 from tsfm_lens.dataset import GiftEvalDataset
@@ -147,6 +150,7 @@ def load_model(
         "chronos_bolt": lambda: CircuitLensBolt.from_pretrained(
             cfg.chronos_bolt.model_id, device_map=device_map, torch_dtype=torch_dtype
         ),
+        "chronos2": lambda: CircuitLensChronos2(cfg.chronos2.model_id, device=device_map),
         "toto": lambda: CircuitLensToto(cfg.toto.model_id, device_map=device_map),
         "moirai": lambda: CircuitLensMoirai(
             cfg.moirai.model_id,
@@ -518,9 +522,65 @@ def run_toto_evaluation(
     results.to_csv(csv_path, index=False)
 
 
+def run_chronos2_evaluation(
+    pipeline: CircuitLensChronos2,
+    cfg: DictConfig,
+    selected_dataset_names: list[str],
+    selected_term: str,
+    medium_long_datasets: list[str],
+    dataset_properties_map: dict[str, dict],
+    csv_path: str,
+):
+    logger.info(f"Evaluating {len(selected_dataset_names)} datasets")
+    all_results = []
+    for ds_name in tqdm(selected_dataset_names, desc="Evaluating datasets"):
+        ds_key = ds_name.split("/")[0]
+        logger.info(f"Processing dataset: {ds_name}")
+        for term in get_dataset_terms(ds_name, selected_term, medium_long_datasets):
+            ds_key, ds_freq = parse_dataset_key(ds_name, dataset_properties_map)
+            ds_config = f"{ds_key}/{ds_freq}/{term}"
+            logger.info(f"Generating forecasts for {ds_config}")
+            all_results.append(
+                (
+                    evaluate_on_dataset(
+                        pipeline=pipeline,
+                        data_dir=cfg.eval.data_dir,
+                        ds_name=ds_name,
+                        ds_term=term,
+                        batch_size=100,
+                        metrics=METRICS,
+                        use_multivariate_data=True,
+                        predict_batches_jointly=True,
+                        device_map="cuda",
+                        torch_dtype="float32",
+                    ),
+                    ds_config,
+                    dataset_properties_map[ds_key]["domain"],
+                    dataset_properties_map[ds_key]["num_variates"],
+                )
+            )
+
+    result_df_rows = []
+    for result_metrics, ds_config, domain, num_variates in all_results:
+        result_metrics = {f"eval_metrics/{k}": v for k, v in result_metrics[0].items()}
+
+        result_df_rows.append(
+            {
+                "dataset": ds_config,
+                "model": pipeline.__class__.__name__,
+                **result_metrics,
+                "domain": domain,
+                "num_variates": num_variates,
+            }
+        )
+    results_df = pd.DataFrame(result_df_rows).sort_values(by="dataset")
+    results_df.to_csv(csv_path, index=False)
+    logger.info(f"Results have been written to {csv_path}.")
+
+
 def run_standard_evaluation(
     pipeline: BaseCircuitLens,
-    model_type: Literal["timesfm", "chronos", "chronos_bolt", "moirai"],
+    model_type: Literal["timesfm", "chronos", "chronos_bolt", "chronos2", "moirai"],
     cfg: DictConfig,
     selected_dataset_names: list[str],
     selected_term: str,
@@ -557,6 +617,13 @@ def run_standard_evaluation(
     if model_type == "toto":
         raise ValueError("Use run_toto_evaluation() for Toto models")
 
+    if model_type == "chronos2":
+        warnings.warn(
+            "While chronos2 can be run with standard evaluation, the default setting of predict_batches_jointly=True has an important implication: "
+            "Using cross learning mode. Please ensure that different rolling windows of the same time series are not in `test_data_input` to avoid any potential leakage due to in-context learning."
+            "We recommend using the dedicated run_chronos2_evaluation() function for Chronos2"
+        )
+
     logger.info(f"Running standard evaluation with batch size: {batch_size}")
     with open(csv_path, "w", newline="") as f:
         csv.writer(f).writerow(row_header)
@@ -592,6 +659,19 @@ def run_standard_evaluation(
                 predictor = ChronosPredictor(
                     pipeline, dataset.prediction_length, num_samples=cfg.chronos.num_samples, rseed=cfg.eval.rseed
                 )
+            elif model_type == "chronos2":
+                predictor_kwargs = {
+                    "predict_batches_jointly": True,
+                    "device_map": "cuda",
+                    "torch_dtype": "float32",
+                }
+                predictor = Chronos2Predictor(
+                    model_name=cfg.chronos2.model_id,
+                    prediction_length=dataset.prediction_length,
+                    batch_size=suggested_batch_size,
+                    **predictor_kwargs,
+                )
+
             elif model_type == "moirai":
                 # set the Moirai hyperparameter according to each dataset, then create the predictor
                 pipeline.model.hparams.prediction_length = dataset.prediction_length
@@ -692,7 +772,7 @@ def main(cfg):
     # Clear CUDA cache and load model
     clear_cuda_cache(device)
 
-    pipeline = load_model(cfg.ablation.model_type, cfg, device=device, torch_dtype=torch_dtype)
+    pipeline = load_model(model_type=cfg.ablation.model_type, cfg=cfg, device=device, torch_dtype=torch_dtype)
 
     head_selection_strategy = cfg.ablation.head_selection_strategy
 
@@ -767,26 +847,35 @@ def main(cfg):
 
     if cfg.ablation.model_type == "toto":
         run_toto_evaluation(
-            pipeline,  # type: ignore[arg-type]
-            cfg,
-            selected_datasets,
-            gift_cfg.term,
-            gift_cfg.medium_long_datasets,
-            dataset_properties_map,
-            csv_path,
+            pipeline=pipeline,  # type: ignore[arg-type]
+            cfg=cfg,
+            selected_dataset_names=selected_datasets,
+            selected_term=gift_cfg.term,
+            medium_long_datasets=gift_cfg.medium_long_datasets,
+            dataset_properties_map=dataset_properties_map,
+            csv_path=csv_path,
+        )
+    elif cfg.ablation.model_type == "chronos2":
+        run_chronos2_evaluation(
+            pipeline=pipeline,  # type: ignore[arg-type]
+            cfg=cfg,
+            selected_dataset_names=selected_datasets,
+            selected_term=gift_cfg.term,
+            medium_long_datasets=gift_cfg.medium_long_datasets,
+            dataset_properties_map=dataset_properties_map,
+            csv_path=csv_path,
         )
     else:
         run_standard_evaluation(
-            pipeline,
-            cfg.ablation.model_type,
-            cfg,
-            selected_datasets,
-            gift_cfg.term,
-            gift_cfg.medium_long_datasets,
-            dataset_properties_map,
-            csv_path,
-            row_header,
-            batch_size=cfg.eval.batch_size,
+            pipeline=pipeline,  # type: ignore[arg-type]
+            model_type=cfg.ablation.model_type,
+            cfg=cfg,
+            selected_dataset_names=selected_datasets,
+            selected_term=gift_cfg.term,
+            medium_long_datasets=gift_cfg.medium_long_datasets,
+            dataset_properties_map=dataset_properties_map,
+            csv_path=csv_path,
+            row_header=row_header,
         )
 
     logger.info(f"\nFinal results: {csv_path}")
