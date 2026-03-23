@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 import torch
 from chronos.chronos2 import Chronos2Model, Chronos2Pipeline
-
-# Ensure local checkout of chronos-forecasting is on path
-CHRONOS_PATH = Path(__file__).resolve().parents[2] / "external" / "chronos-forecasting" / "src"
-if CHRONOS_PATH.exists() and str(CHRONOS_PATH) not in sys.path:
-    sys.path.insert(0, str(CHRONOS_PATH))
 
 
 @dataclass
@@ -31,7 +24,7 @@ class Chronos2PipelineCustom:
                 if self.model_name is None:
                     raise ValueError("Provide either `model`, `pipeline`, or `model_name`.")
                 self.model = Chronos2Model.from_pretrained(self.model_name)  # type: ignore[attr-defined]
-            self.model = self.model.to(self.device)
+            self.model = self.model.to(self.device)  # type: ignore[assignment]
             self.pipeline = Chronos2Pipeline(self.model)
         else:
             # ensure model attribute is set for lens usage
@@ -47,7 +40,7 @@ class Chronos2PipelineCustom:
         batch_size: int = 256,
         limit_prediction_length: bool = False,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Run inference and return point forecasts (median quantile).
 
@@ -70,7 +63,7 @@ class Chronos2PipelineCustom:
         context = context.permute(0, 2, 1)
         context_np = context.cpu().numpy()
 
-        _, mean_list = self.pipeline.predict_quantiles(  # type: ignore[attr-defined]
+        quantiles, mean_list = self.pipeline.predict_quantiles(  # type: ignore[attr-defined]
             context_np,
             prediction_length=prediction_length,
             batch_size=batch_size,
@@ -80,13 +73,17 @@ class Chronos2PipelineCustom:
 
         # mean_list elements shaped (n_variates, prediction_length)
         preds = torch.stack([torch.as_tensor(arr) for arr in mean_list], dim=0)
-
+        quantiles = torch.stack([torch.as_tensor(arr) for arr in quantiles], dim=0)
         # Reorder back to (batch, prediction_length[, dim])
         preds = preds.permute(0, 2, 1)  # (batch, prediction_length, dim)
         if preds.shape[-1] == 1:
             preds = preds.squeeze(-1)
 
-        return preds.to(context.device)
+        quantiles = quantiles.permute(0, 3, 2, 1)  # (batch, quantiles, prediction_length, dim)
+        if quantiles.shape[-1] == 1:
+            quantiles = quantiles.squeeze(-1)
+
+        return preds.to(context.device), quantiles.to(context.device)
 
     @classmethod
     def from_pretrained(

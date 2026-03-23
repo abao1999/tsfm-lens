@@ -29,18 +29,20 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=1
+gpu_index=2
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
 batch_size=512
 
 # Ablation grid parameters (bash arrays)
-rseeds=(42)
+rseeds=(99)
 ablated_components="[head]"
+# ablated_components="[head,mlp]"
 
 # TODO: use ablated_components as the switch instead i.e. ablated_components == "null" means do original evaluation
-head_selection_strategy="null" # "null" to disable ablations
+head_selection_strategy="srank" # "null" to disable ablations
+# head_selection_strategy="all_components" # "null" to disable ablations
 
 model_type="chronos2"
 
@@ -49,7 +51,7 @@ model_type="chronos2"
 declare -A target_ablations
 # 1, ..., max_num_heads, null
 num_heads_str="$(seq -s ' ' 1 11) null"
-layer_lst=(0)
+layer_lst=(0 1 2 3 4 5 6 7 10 11)
 # for layer in {0..11}; do
 for layer in "${layer_lst[@]}"; do
     target_ablations[$layer]="$num_heads_str"

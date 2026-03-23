@@ -763,6 +763,160 @@ def extract_projection_weights_TimesFM2p5(
     return selected_head_WQ, selected_head_WK, selected_head_WV, selected_head_WO
 
 
+def extract_projection_weights_Chronos2(
+    model,
+    selected_layer: int,
+    selected_head: int,
+    verbose: bool = False,
+    attention_type: Literal["time", "group"] = "time",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Extract query (Q), key (K), value (V), and output (O) projection weight matrices
+    for a specific attention head from a Chronos-2 model.
+
+    Chronos-2 encoder blocks contain two separate self-attention modules:
+    `TimeSelfAttention` and `GroupSelfAttention`. Each module exposes distinct
+    `q`, `k`, `v`, and `o` Linear layers. This function extracts and separates
+    the per-head Q, K, V, and O projection weights for one of those attention
+    modules.
+
+    Args:
+        model: The Chronos-2 model instance, or a wrapper exposing it as `.model`
+        selected_layer: Encoder block index (0-indexed)
+        selected_head: Head index (0-indexed) within the selected attention module
+        verbose: If True, prints diagnostic information about shapes and indices
+        attention_type: Which encoder attention module to inspect: `"time"` for
+            `block.layer[0]` or `"group"` for `block.layer[1]`
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: A tuple containing
+            (head_WQ, head_WK, head_WV, head_WO) where:
+            - head_WQ: Query projection weights with shape (head_dim, d_model)
+            - head_WK: Key projection weights with shape (head_dim, d_model)
+            - head_WV: Value projection weights with shape (head_dim, d_model)
+            - head_WO: Output projection weights with shape (head_dim, d_model)
+                * head_dim: Dimension per attention head (d_model // num_heads)
+                * d_model: Full model embedding dimension
+
+            All arrays are float32 numpy arrays detached from the computation graph.
+            Q, K, V matrices project input vectors to query/key/value vectors.
+            O matrix projects each head's output back to the full model dimension.
+
+            Note: Shape convention matches extract_projection_weights_Chronos and
+            extract_projection_weights_Toto for consistency across different model
+            architectures.
+
+    Raises:
+        ValueError: If the requested layer, attention module, or head index is invalid
+
+    NOTE: we adopt the convention that all per-head projection matrices are of shape (head_dim, d_model),
+    where head_dim = d_model // num_heads. This could be confusing when looking at the mathematical form of the attention operation
+
+    Example:
+        >>> WQ, WK, WV, WO = extract_projection_weights_Chronos2(
+        ...     model, selected_layer=2, selected_head=5, attention_type="time"
+        ... )
+        >>> print(f"Query weights shape: {WQ.shape}")   # e.g. (64, 768)
+        >>> print(f"Key weights shape: {WK.shape}")     # e.g. (64, 768)
+        >>> print(f"Value weights shape: {WV.shape}")   # e.g. (64, 768)
+        >>> print(f"Output weights shape: {WO.shape}")  # e.g. (64, 768)
+    """
+
+    if hasattr(model, "model"):
+        model = model.model
+
+    if attention_type not in {"time", "group"}:
+        raise ValueError(f"Unsupported attention_type '{attention_type}'. Expected 'time' or 'group'.")
+
+    if not hasattr(model, "encoder") or not hasattr(model.encoder, "block"):
+        raise ValueError("Chronos-2 model must expose encoder blocks at `model.encoder.block`.")
+
+    num_layers = len(model.encoder.block)
+    if not 0 <= selected_layer < num_layers:
+        raise ValueError(f"Layer index {selected_layer} out of range [0, {num_layers}).")
+
+    block = model.encoder.block[selected_layer]
+    attention_idx = 0 if attention_type == "time" else 1
+    attention_module = block.layer[attention_idx]
+
+    if not hasattr(attention_module, "self_attention"):
+        raise ValueError(
+            f"Layer {selected_layer} {attention_type} attention does not expose `self_attention`."
+        )
+
+    mha = attention_module.self_attention
+    for proj_name in ("q", "k", "v", "o"):
+        if not hasattr(mha, proj_name):
+            raise ValueError(
+                f"Layer {selected_layer} {attention_type} attention is missing `{proj_name}` projection."
+            )
+
+    if not hasattr(model, "config") or not hasattr(model.config, "num_heads"):
+        raise ValueError("Chronos-2 model config must define `num_heads`.")
+
+    num_heads = int(model.config.num_heads)
+
+    if verbose:
+        print(f"attention_type: {attention_type}")
+        print(f"num_heads: {num_heads}")
+
+    q_proj = mha.q
+    k_proj = mha.k
+    v_proj = mha.v
+    out_proj = mha.o
+
+    # Each projection weight has shape (out_features, in_features) = (d_model, d_model)
+    wQ = q_proj.weight
+    wK = k_proj.weight
+    wV = v_proj.weight
+    wO = out_proj.weight
+
+    d_model = wQ.shape[1]
+    if d_model % num_heads != 0:
+        raise ValueError(f"d_model {d_model} is not divisible by num_heads {num_heads}.")
+    d_head = d_model // num_heads
+
+    if not 0 <= selected_head < num_heads:
+        raise ValueError(f"Head index {selected_head} out of range [0, {num_heads}).")
+
+    if verbose:
+        print(f"wQ shape: {wQ.shape}, wK shape: {wK.shape}, wV shape: {wV.shape}")
+        print(f"wO shape: {wO.shape}")
+        print(f"\nd_model: {d_model}, num_heads: {num_heads}, d_head: {d_head}")
+
+    # Transpose to get (in_features, out_features) = (d_model, d_model), then split
+    # the output dimension into individual heads. Each chunk is (d_model, d_head).
+    wQ_heads = wQ.T.chunk(num_heads, dim=1)
+    wK_heads = wK.T.chunk(num_heads, dim=1)
+    wV_heads = wV.T.chunk(num_heads, dim=1)
+
+    # Transpose Q, K, V to match (head_dim, d_model) convention
+    selected_head_WQ = wQ_heads[selected_head].T.float().detach().cpu().numpy()
+    selected_head_WK = wK_heads[selected_head].T.float().detach().cpu().numpy()
+    selected_head_WV = wV_heads[selected_head].T.float().detach().cpu().numpy()
+
+    # The output projection consumes concatenated head activations, so split the
+    # input dimension into head-sized chunks and transpose to keep (head_dim, d_model).
+    out_heads = wO.chunk(num_heads, dim=1)
+    if verbose:
+        print(f"\nNumber of Q heads: {len(wQ_heads)}")
+        print(f"Shape of each Q head (before transpose): {wQ_heads[0].shape}")
+        print(f"Number of K heads: {len(wK_heads)}")
+        print(f"Shape of each K head (before transpose): {wK_heads[0].shape}")
+        print(f"Number of V heads: {len(wV_heads)}")
+        print(f"Shape of each V head (before transpose): {wV_heads[0].shape}")
+
+    selected_head_WO = out_heads[selected_head].T.float().detach().cpu().numpy()
+
+    if verbose:
+        print(f"\nwQ[head {selected_head}] shape (after transpose): {selected_head_WQ.shape}")
+        print(f"wK[head {selected_head}] shape (after transpose): {selected_head_WK.shape}")
+        print(f"wV[head {selected_head}] shape (after transpose): {selected_head_WV.shape}")
+        print(f"wO[head {selected_head}] shape (after transpose): {selected_head_WO.shape}")
+
+    return selected_head_WQ, selected_head_WK, selected_head_WV, selected_head_WO
+
+
 def _softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
     x = x - np.max(x, axis=axis, keepdims=True)
     return np.exp(x) / np.sum(np.exp(x), axis=axis, keepdims=True)

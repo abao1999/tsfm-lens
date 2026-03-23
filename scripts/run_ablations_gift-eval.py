@@ -199,7 +199,7 @@ def setup_ablations_by_strategy(
         ablations_types: List of component types to ablate (e.g., ["head"], ["mlp"],
             or ["head", "mlp"]).
         ablate_n_heads_per_layer: Number of heads to ablate per layer. If None,
-            all heads in the specified layers are ablated.
+            all heads in the specified layers are ablated. TODO: this can be very confusing, refactor this logic.
         head_selection_strategy: Strategy for selecting which heads to ablate:
             - "random": Randomly select heads using `rseed` for reproducibility.
             - "srank": Select heads with lowest stable rank scores (least important
@@ -530,6 +530,7 @@ def run_chronos2_evaluation(
     medium_long_datasets: list[str],
     dataset_properties_map: dict[str, dict],
     csv_path: str,
+    batch_size: int = 100,
 ):
     logger.info(f"Evaluating {len(selected_dataset_names)} datasets")
     all_results = []
@@ -547,11 +548,11 @@ def run_chronos2_evaluation(
                         data_dir=cfg.eval.data_dir,
                         ds_name=ds_name,
                         ds_term=term,
-                        batch_size=100,
+                        batch_size=batch_size,
                         metrics=METRICS,
                         use_multivariate_data=True,
                         predict_batches_jointly=True,
-                        device_map="cuda",
+                        device_map=str(pipeline.device),
                         torch_dtype="float32",
                     ),
                     ds_config,
@@ -642,6 +643,7 @@ def run_standard_evaluation(
                 # NOTE: since Moirai supports multivariate time series forecast, there is no need to convert the original data into univariate
                 # Check if univariate conversion needed
                 if not to_univariate:
+                    # True if is multivariate source dataset
                     to_univariate = (
                         GiftEvalDataset(
                             name=ds_name, term=term, to_univariate=False, data_dir=cfg.eval.data_dir
@@ -660,13 +662,15 @@ def run_standard_evaluation(
                     pipeline, dataset.prediction_length, num_samples=cfg.chronos.num_samples, rseed=cfg.eval.rseed
                 )
             elif model_type == "chronos2":
+                if pipeline.__class__.__name__ != "CircuitLensChronos2":
+                    raise ValueError("pipeline must be an instance of CircuitLensChronos2")
                 predictor_kwargs = {
                     "predict_batches_jointly": True,
-                    "device_map": "cuda",
+                    "device_map": str(pipeline.device),
                     "torch_dtype": "float32",
                 }
                 predictor = Chronos2Predictor(
-                    model_name=cfg.chronos2.model_id,
+                    pipeline=pipeline,  # type: ignore[arg-type]
                     prediction_length=dataset.prediction_length,
                     batch_size=suggested_batch_size,
                     **predictor_kwargs,
@@ -864,6 +868,7 @@ def main(cfg):
             medium_long_datasets=gift_cfg.medium_long_datasets,
             dataset_properties_map=dataset_properties_map,
             csv_path=csv_path,
+            batch_size=cfg.eval.batch_size,
         )
     else:
         run_standard_evaluation(
@@ -876,6 +881,7 @@ def main(cfg):
             dataset_properties_map=dataset_properties_map,
             csv_path=csv_path,
             row_header=row_header,
+            batch_size=cfg.eval.batch_size,
         )
 
     logger.info(f"\nFinal results: {csv_path}")

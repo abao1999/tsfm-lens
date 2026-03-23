@@ -57,7 +57,7 @@ class CircuitLensChronos2(Chronos2PipelineCustom, BaseCircuitLens):
         self.is_decoder_only = True
 
     def set_to_eval_mode(self) -> None:
-        self.model.eval()
+        self.model.eval()  # type: ignore[attr-defined]
 
     # ---------- Hook fns ----------
     def _ablate_head_hook_fn(
