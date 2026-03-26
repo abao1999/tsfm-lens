@@ -17,6 +17,8 @@ class BaseCircuitLens:
     Subclasses should implement all methods marked with NotImplementedError.
     """
 
+    device: torch.device = torch.device("cuda")  # NOTE: this is just a dummy placeholder
+
     def __init__(self, model):
         self.model = model
         self.num_layers: int = 0  # Should be set by subclasses

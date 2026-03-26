@@ -29,27 +29,29 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=3
+gpu_index=2
 term="all"
 max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
 batch_size=512
 
 # Ablation grid parameters (bash arrays)
-rseeds=(42)
+rseeds=(99)
 ablated_components="[head]"
+# ablated_components="[head,mlp]"
 
 # TODO: use ablated_components as the switch instead i.e. ablated_components == "null" means do original evaluation
 head_selection_strategy="srank" # "null" to disable ablations
+# head_selection_strategy="all_components" # "null" to disable ablations
 
-model_type="moirai"
+model_type="chronos2"
 
 # spec: layer -> space-separated num_heads to run
 # Generate target_ablations with all layers and all num_heads
 declare -A target_ablations
 # 1, ..., max_num_heads, null
 num_heads_str="$(seq -s ' ' 1 11) null"
-layer_lst=(0)
+layer_lst=(0 1 2 3 4 5 6 7 10 11)
 # for layer in {0..11}; do
 for layer in "${layer_lst[@]}"; do
     target_ablations[$layer]="$num_heads_str"
@@ -67,6 +69,7 @@ declare -A model_names=(
     ["timesfm"]="google/timesfm-2.5-200m-pytorch"
     ["chronos_bolt"]="amazon/chronos-bolt-base"
     ["chronos"]="amazon/chronos-t5-base"
+    ["chronos2"]="amazon/chronos-2"
     ["toto"]="Datadog/Toto-Open-Base-1.0"
     ["moirai"]="Salesforce/moirai-1.1-R-base"
 )
@@ -90,6 +93,7 @@ declare -A model_args_map=(
     ["timesfm"]="timesfm.model_id=${model_name}"
     ["toto"]="toto.model_id=${model_name} toto.samples_per_batch=${toto_num_samples} toto.use_kv_cache=true toto.pad_short_series=false"
     ["moirai"]="moirai.model_id=${model_name} moirai.patch_size=32 moirai.num_samples=${moirai_num_samples}"
+    ["chronos2"]="chronos2.model_id=${model_name}"
 )
 
 # Append num_samples to model_name_str for models that use sampling
