@@ -51,7 +51,7 @@ model_type="chronos2"
 declare -A target_ablations
 # 1, ..., max_num_heads, null
 num_heads_str="$(seq -s ' ' 1 11) null"
-layer_lst=(0 1 2 3 4 5 6 7 10 11)
+layer_lst=(1 2 3 4 5 6 7 8 9 10 11)
 # for layer in {0..11}; do
 for layer in "${layer_lst[@]}"; do
     target_ablations[$layer]="$num_heads_str"

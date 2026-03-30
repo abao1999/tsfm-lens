@@ -797,7 +797,11 @@ def main(cfg):
             layers_to_keep_at_headsxpp=cfg.ablation.to_heads_at_xpp.layers_to_keep_at_headsxpp,
             chosen_layers_mlp=cfg.ablation.to_heads_at_xpp.chosen_layers_mlp,
         )
-        output_subdir_name = f"headsxpp_rseed-{cfg.eval.rseed}"
+        threshold_pct = cfg.ablation.to_heads_at_xpp.threshold_pct
+        threshold_pct_str = (
+            f"{int(threshold_pct) if int(threshold_pct) == threshold_pct else str(threshold_pct).replace('.', 'p')}"
+        )
+        output_subdir_name = f"heads{threshold_pct_str}pp_rseed-{cfg.eval.rseed}"
 
     elif head_selection_strategy in [
         "random",

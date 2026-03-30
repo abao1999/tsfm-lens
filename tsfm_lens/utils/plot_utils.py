@@ -699,7 +699,17 @@ def plot_ablation_metrics_distributional(
 
     if verbose:
         for label, arr in zip(x_labels, plot_data):
-            print(f"{label}: Median = {np.median(arr):.4f}, Mean = {np.mean(arr):.4f}")
+            median = np.median(arr)
+            mean = np.mean(arr)
+            std = np.std(arr)
+            p5 = np.percentile(arr, 5)
+            p25 = np.percentile(arr, 25)
+            p75 = np.percentile(arr, 75)
+            p95 = np.percentile(arr, 95)
+            print(
+                f"{label}: Median = {median:.2f}, Mean = {mean:.2f}, Std = {std:.2f}, "
+                f"P5 = {p5:.2f}, P25 = {p25:.2f}, P75 = {p75:.2f}, P95 = {p95:.2f}"
+            )
 
 
 def plot_ablation_metrics_lines_over_horizon(

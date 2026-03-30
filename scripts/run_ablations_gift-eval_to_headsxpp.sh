@@ -36,22 +36,22 @@ max_datasets="null"
 data_dir="${WORK}/data/gift-eval"
 batch_size=1024
 
-rseeds=(42)
+rseeds=(99)
 ablated_components="[head,mlp]"
 
 head_selection_strategy="headsxpp"
 threshold_pct=1.0
 
-model_type="moirai"
+model_type="chronos2"
 
-chosen_layers=(1 2 3 4 5)
+chosen_layers=(3 4 5 6 7 8 9)
 echo "chosen_layers: ${chosen_layers[*]}"
-chosen_layers_mlp=()
+chosen_layers_mlp=(1 2)
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
 num_heads_per_layer_to_skip=0
 echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-layers_to_keep_at_headsxpp=()
+layers_to_keep_at_headsxpp=(3 4 5 6 7 8 9)
 echo "layers_to_keep_at_headsxpp: ${layers_to_keep_at_headsxpp[*]}"
 
 # =============================================================================
@@ -61,6 +61,7 @@ declare -A model_names=(
     ["timesfm"]="google/timesfm-2.5-200m-pytorch"
     ["chronos_bolt"]="amazon/chronos-bolt-base"
     ["chronos"]="amazon/chronos-t5-base"
+    ["chronos2"]="amazon/chronos-2"
     ["toto"]="Datadog/Toto-Open-Base-1.0"
     ["moirai"]="Salesforce/moirai-1.1-R-base"
 )
@@ -84,6 +85,7 @@ declare -A model_args_map=(
     ["timesfm"]="timesfm.model_id=${model_name}"
     ["toto"]="toto.model_id=${model_name} toto.samples_per_batch=${toto_num_samples} toto.use_kv_cache=true toto.pad_short_series=false"
     ["moirai"]="moirai.model_id=${model_name} moirai.patch_size=32 moirai.num_samples=${moirai_num_samples}"
+    ["chronos2"]="chronos2.model_id=${model_name}"
 )
 
 # Append num_samples to model_name_str for models that use sampling

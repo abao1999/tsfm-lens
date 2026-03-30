@@ -11,6 +11,7 @@ import hydra
 import torch
 
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
+from tsfm_lens.chronos2.circuitlens import CircuitLensChronos2
 from tsfm_lens.chronos_bolt.circuitlens import CircuitLensBolt
 from tsfm_lens.dataset import TestDataset
 from tsfm_lens.evaluation import evaluate_ablations
@@ -22,6 +23,7 @@ from tsfm_lens.utils import (
     get_dim_from_dataset,
     get_eval_data_dict,
     get_gift_eval_data_dict,
+    left_pad_and_stack_1D,
     make_json_serializable,
     save_evaluation_results,
 )
@@ -98,6 +100,61 @@ def main(cfg):
         prediction_kwargs = {
             "limit_prediction_length": cfg.chronos_bolt.limit_prediction_length,
         }
+    elif model_type == "chronos2":
+        pipeline = CircuitLensChronos2(
+            cfg.chronos2.model_id,
+            device=device,
+        )
+
+        context_length = cfg.chronos2.context_length
+        prediction_kwargs = {
+            "batch_size": cfg.eval.batch_size,
+            "limit_prediction_length": False,
+        }
+        num_samples = 1
+
+        # Chronos-2 returns `(point_forecast, quantiles)`; the ablations evaluator
+        # expects `pipeline.predict(...)` to return only the point forecast tensor.
+        chronos2_predict = pipeline.predict
+
+        def normalize_chronos2_context(context):
+            if isinstance(context, torch.Tensor):
+                return context
+            if not isinstance(context, (list, tuple)):
+                return context
+            if len(context) == 0:
+                raise ValueError("Chronos-2 received empty context input.")
+
+            flattened_context = []
+            for ctx in context:
+                if not isinstance(ctx, torch.Tensor):
+                    raise ValueError(f"Chronos-2 expects tensor context entries, got {type(ctx)}")
+                if ctx.ndim == 2:
+                    flattened_context.extend([ctx[i] for i in range(ctx.shape[0])])
+                elif ctx.ndim == 1:
+                    flattened_context.append(ctx)
+                else:
+                    raise ValueError(f"Unexpected context shape for Chronos-2: {ctx.shape}")
+
+            if all(flattened_context[0].shape == ctx.shape for ctx in flattened_context):
+                return torch.stack(flattened_context, dim=0)
+            return left_pad_and_stack_1D(flattened_context)
+
+        def predict_point_forecast(*args, **kwargs):
+            normalized_args = list(args)
+            if normalized_args:
+                normalized_args[0] = normalize_chronos2_context(normalized_args[0])
+            elif "context" in kwargs:
+                kwargs = dict(kwargs)
+                kwargs["context"] = normalize_chronos2_context(kwargs["context"])
+
+            point_forecast, _ = chronos2_predict(*normalized_args, **kwargs)
+            return point_forecast
+
+        pipeline.predict = predict_point_forecast  # type: ignore[method-assign]
+
+        logger.info(f"model was trained with context_length: {context_length}")
+        logger.info("model was trained with prediction_length: dynamic")
     elif model_type == "timesfm":
         pipeline = CircuitLensTimesFM(
             cfg.timesfm.model_id,
@@ -143,7 +200,10 @@ def main(cfg):
         num_samples = prediction_kwargs["num_samples"]
 
     else:
-        raise ValueError(f"Unknown model type: {model_type}. Expected 'chronos' or 'chronos_bolt'")
+        raise ValueError(
+            f"Unknown model type: {model_type}. Expected one of "
+            "'chronos', 'chronos_bolt', 'chronos2', 'timesfm', 'toto', or 'moirai'"
+        )
 
     num_layers = pipeline.num_layers
     num_heads = pipeline.num_heads

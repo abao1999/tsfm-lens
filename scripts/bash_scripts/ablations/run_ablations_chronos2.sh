@@ -13,15 +13,17 @@ ablation_types_input=$3
 n_consecutive_layers_input=$4
 ablate_n_heads_per_layer=$5
 gpu_index=$6
-term=$7
-prediction_length=$8
+
+# Optional arguments with defaults
+term=${7:-short}
+prediction_length=${8:-512}
 
 # Hardcoded window_start_time
-window_start_time=2512 # NOTE: only relevant for fixed_start window style, i.e. base40 dataset
+window_start_time=2512
 
 # Check required arguments
 if [ -z "$dataset_name" ] || [ -z "$num_test_instances" ] || [ -z "$ablation_types_input" ] || [ -z "$n_consecutive_layers_input" ] || [ -z "$ablate_n_heads_per_layer" ] || [ -z "$gpu_index" ]; then
-    echo "Usage: $0 <dataset_name> <num_test_instances> <ablation_types_lst> <n_consecutive_layers_lst> <ablate_n_heads_per_layer> <gpu_index> [term]"
+    echo "Usage: $0 <dataset_name> <num_test_instances> <ablation_types_lst> <n_consecutive_layers_lst> <ablate_n_heads_per_layer> <gpu_index> [term] [prediction_length]"
     echo ""
     echo "Required arguments:"
     echo "  dataset_name                      - Name of the dataset (e.g., gift-eval)"
@@ -30,9 +32,10 @@ if [ -z "$dataset_name" ] || [ -z "$num_test_instances" ] || [ -z "$ablation_typ
     echo "  n_consecutive_layers_lst          - Space-separated layer counts (e.g., '1 2 4 6' or '12')"
     echo "  ablate_n_heads_per_layer          - Number of heads to ablate per layer (use 'null' for all heads)"
     echo "  gpu_index                         - GPU index to use (e.g., 1 for cuda:1)"
-    echo "  term                              - Term to use (i.e. short, medium, long)"
-    echo "  prediction_length                 - Prediction length to use (we recommend multiple of 64 because of the evaluation setup)"
     echo ""
+    echo "Optional arguments:"
+    echo "  term                              - Term to use (default: short)"
+    echo "  prediction_length                 - Prediction length to use (default: 512)"
     exit 1
 fi
 
@@ -48,14 +51,12 @@ IFS=' ' read -r -a n_consecutive_layers_to_ablate_lst <<< "$n_consecutive_layers
 
 echo "data_dir: $data_dir"
 
-# Moirai model configuration
-moirai_model_size=base
-moirai_num_samples=100
-moirai_patch_size=32
+# Chronos-2 model configuration
+chronos2_context_length=8192
 
-model_dirname="moirai"
+model_dirname="chronos2"
 
-model_name="Salesforce/moirai-1.1-R-${moirai_model_size}"
+model_name="amazon/chronos-2"
 model_name_str=${model_name//\//-}
 echo "model_dirname: $model_dirname"
 echo "model_name: $model_name"
@@ -66,15 +67,15 @@ echo "n_consecutive_layers_to_ablate_lst: ${n_consecutive_layers_to_ablate_lst[@
 echo "ablate_n_heads_per_layer: $ablate_n_heads_per_layer"
 echo "gpu_index: $gpu_index"
 echo "term: $term"
+echo "prediction_length: $prediction_length"
 echo "window_start_time: $window_start_time"
-echo "moirai_num_samples: $moirai_num_samples"
-echo "moirai_patch_size: $moirai_patch_size"
+echo "chronos2_context_length: $chronos2_context_length"
 
 for ablation_types in "${ablation_types_lst[@]}"; do
     for layer_group_size in "${n_consecutive_layers_to_ablate_lst[@]}"; do
-        # Generate ablation configuration (Moirai base has 12 layers)
+        # Generate ablation configuration (Chronos-2 base has 12 layers)
         generate_ablation_config 12 "$layer_group_size" "$ablation_types" "$ablate_n_heads_per_layer" "$dataset_name" "$window_start_time" "$num_test_instances" "$term"
-        
+
         echo "ablation_types: $ablation_types"
         echo "layer_group_size: $layer_group_size"
         echo "ablations_layer_lst: $ABLATIONS_LAYER_LST"
@@ -84,11 +85,10 @@ for ablation_types in "${ablation_types_lst[@]}"; do
             ablation.ablations_types="${ablation_types}" \
             ablation.ablations_layers_lst=${ABLATIONS_LAYER_LST} \
             ablation.ablate_n_heads_per_layer=${ablate_n_heads_per_layer} \
-            ablation.model_type=moirai \
+            ablation.model_type=chronos2 \
             ablation.model_name_str=${model_name_str} \
-            moirai.model_id=${model_name} \
-            moirai.num_samples=${moirai_num_samples} \
-            moirai.patch_size=${moirai_patch_size} \
+            chronos2.model_id=${model_name} \
+            chronos2.context_length=${chronos2_context_length} \
             eval.prediction_length=${prediction_length} \
             eval.dataset_name=$dataset_name \
             eval.data_dir=$data_dir \
@@ -107,6 +107,6 @@ for ablation_types in "${ablation_types_lst[@]}"; do
             eval.metrics_fname=metrics_${RUN_NAME} \
             eval.device=cuda:${gpu_index} \
             eval.rseed=123 \
-        
+
     done
 done
