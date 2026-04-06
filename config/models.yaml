@@ -45,12 +45,12 @@ chronos2:
 timesfm:
 
   model_id: google/timesfm-2.5-200m-pytorch
-  context_length: 512
+  context_length: 2048
 
 toto:
 
   model_id: Datadog/Toto-Open-Base-1.0
-  context_length: 512
+  context_length: 4096
 
   num_samples: null
   samples_per_batch: 20

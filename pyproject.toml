@@ -43,7 +43,6 @@ dev = [
 
 # Optional dependencies
 [project.optional-dependencies]
-plotly = ["plotly"]
 tsfms = [
     "chronos-forecasting",
     "timesfm",
@@ -51,7 +50,8 @@ tsfms = [
 ]
 # NOTE: toto-ts may conflict with some dependencies
 toto = ["toto-ts"]
-plotting = ["seaborn"]
+plotting = ["seaborn", "plotly"]
+hf_demo = ["gradio"]
 
 # --------------------------------------------------------------------------
 # for installing torch with CUDA
