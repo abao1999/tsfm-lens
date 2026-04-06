@@ -5,7 +5,6 @@ defaults:
   - ablation
   - plotting
   - entropic_rank
-  - attention_entropy
   - induction
   # - override hydra/job_logging: disabled 
   - override hydra/hydra_logging: disabled 
@@ -29,7 +28,7 @@ hydra:
 wandb:
   log: false
   project_name: tsfm_lens
-  entity: gilpinlab
+  entity: null
   group_name: null
   resume: false
   resume_run_id: null

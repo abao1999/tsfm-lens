@@ -1,3 +1,8 @@
+"""
+This file contains a suite of custom implementations of metrics to compare two time-series.
+For the GIFT-Eval benchmark evaluations, we use the implementations from GluonTS instead, which have nothing to do with this file
+"""
+
 from functools import partial
 from typing import Literal
 

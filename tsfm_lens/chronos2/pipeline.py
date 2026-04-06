@@ -52,15 +52,15 @@ class Chronos2PipelineCustom:
 
         if isinstance(context, (list, tuple)):
             context = torch.stack(list(context), dim=0)
-        if context.dim() == 2:
-            context = context.unsqueeze(-1)
-        if context.dim() != 3:
+        if context.dim() == 2:  # type: ignore
+            context = context.unsqueeze(-1)  # type: ignore
+        if context.dim() != 3:  # type: ignore
             raise ValueError(
-                f"Expected context of shape (batch, time) or (batch, time, dim); got {tuple(context.shape)}"
+                f"Expected context of shape (batch, time) or (batch, time, dim); got {tuple(context.shape)}"  # type: ignore
             )
 
         # Chronos2 expects (batch, dim, time)
-        context = context.permute(0, 2, 1)
+        context = context.permute(0, 2, 1)  # type: ignore
         context_np = context.cpu().numpy()
 
         quantiles, mean_list = self.pipeline.predict_quantiles(  # type: ignore[attr-defined]
