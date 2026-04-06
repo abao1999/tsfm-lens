@@ -44,14 +44,14 @@ threshold_pct=1.0
 
 model_type="chronos2"
 
-chosen_layers=(3 4 5 6 7 8 9)
+chosen_layers=(4 5 6 7)
 echo "chosen_layers: ${chosen_layers[*]}"
-chosen_layers_mlp=(1 2)
+chosen_layers_mlp=()
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
-num_heads_per_layer_to_skip=0
+num_heads_per_layer_to_skip=3
 echo "num_heads_per_layer_to_skip: ${num_heads_per_layer_to_skip}"
-layers_to_keep_at_headsxpp=(3 4 5 6 7 8 9)
+layers_to_keep_at_headsxpp=(4 5)
 echo "layers_to_keep_at_headsxpp: ${layers_to_keep_at_headsxpp[*]}"
 
 # =============================================================================
