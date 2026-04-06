@@ -10,8 +10,6 @@ from tqdm import tqdm
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 from tsfm_lens.utils import set_seed
 
-import pdb
-
 
 def generate_rrt_sequences(
     vocab_range: tuple[int, int] = (1911, 2187),
@@ -86,7 +84,7 @@ def main(cfg):
         if hasattr(cfg.eval, "device") and cfg.eval.device is not None:
             target_device = torch.device(cfg.eval.device)
         elif gpu_count > 1:
-            target_device = torch.device("cuda:1")
+            target_device = torch.device("cuda:0")
         else:
             target_device = torch.device("cuda:0")
     else:
@@ -130,9 +128,7 @@ def main(cfg):
                     device=target_device,
                 )
                 eos_value = EOS_TOKEN_ID.to(device=target_device, dtype=token_ids.dtype)
-                eos_column = (
-                    torch.ones((token_ids.size(0), 1), dtype=token_ids.dtype, device=target_device) * eos_value
-                )
+                eos_column = torch.ones((token_ids.size(0), 1), dtype=token_ids.dtype, device=target_device) * eos_value
                 token_ids = torch.cat([token_ids, eos_column], dim=-1)
                 attention_mask = torch.cat(
                     [attention_mask, torch.ones_like(eos_column, dtype=attention_mask.dtype)], dim=-1
@@ -170,9 +166,13 @@ def main(cfg):
                     mosaic_right_scores = torch.zeros((cfg.induction_scores.batch_size, num_layers, num_heads))
                     mosaic_right_mean = torch.zeros((num_layers, num_heads))
                     mosaic_right_std = torch.zeros((num_layers, num_heads))
-                    
-                    correct_token_attribution_scores = torch.zeros((cfg.induction_scores.batch_size, num_layers, num_heads))
-                    all_token_attribution_scores = torch.zeros((cfg.induction_scores.batch_size, num_layers, num_heads, t5_model.config.vocab_size))
+
+                    correct_token_attribution_scores = torch.zeros(
+                        (cfg.induction_scores.batch_size, num_layers, num_heads)
+                    )
+                    all_token_attribution_scores = torch.zeros(
+                        (cfg.induction_scores.batch_size, num_layers, num_heads, t5_model.config.vocab_size)
+                    )
                     correct_token_attribution_mean = torch.zeros((num_layers, num_heads))
                     correct_token_attribution_std = torch.zeros((num_layers, num_heads))
 
@@ -228,7 +228,9 @@ def main(cfg):
 
                             all_token_attribution_scores[:, layer, head, :] = attributed_logits.detach().to("cpu")
                             # breakpoint()
-                            correct_token_attribution_scores[:, layer, head] = correct_token_attribution.detach().to("cpu").squeeze()
+                            correct_token_attribution_scores[:, layer, head] = (
+                                correct_token_attribution.detach().to("cpu").squeeze()
+                            )
                             correct_token_attribution_mean[layer][head] = float(
                                 correct_token_attribution.detach().to("cpu").mean()
                             )
@@ -263,8 +265,8 @@ def main(cfg):
                     }
                     right_scores = {
                         "all_right_scores": mosaic_right_scores,
-                        "mean": mosaic_right_mean, 
-                        "std": mosaic_right_std
+                        "mean": mosaic_right_mean,
+                        "std": mosaic_right_std,
                     }
                     correct_token_attribution = {
                         "correct_token_attributions": correct_token_attribution_scores,

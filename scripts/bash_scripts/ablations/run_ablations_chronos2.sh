@@ -31,7 +31,7 @@ if [ -z "$dataset_name" ] || [ -z "$num_test_instances" ] || [ -z "$ablation_typ
     echo "  ablation_types_lst                - Space-separated ablation types (e.g., 'head head,mlp' for [['head'], ['head','mlp']])"
     echo "  n_consecutive_layers_lst          - Space-separated layer counts (e.g., '1 2 4 6' or '12')"
     echo "  ablate_n_heads_per_layer          - Number of heads to ablate per layer (use 'null' for all heads)"
-    echo "  gpu_index                         - GPU index to use (e.g., 1 for cuda:1)"
+    echo "  gpu_index                         - GPU index to use (e.g., 1 for cuda:0)"
     echo ""
     echo "Optional arguments:"
     echo "  term                              - Term to use (default: short)"
