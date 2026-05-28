@@ -36,7 +36,7 @@ if [ -z "$dataset_name" ] || [ -z "$num_test_instances" ] || [ -z "$ablation_typ
     exit 1
 fi
 
-data_dir=$WORK/data/$dataset_name
+data_dir=$STOR/data/$dataset_name
 
 # Parse ablation_types_lst from space-separated input
 # Input format: "head head,mlp mlp" -> creates array: (['head'] ['head', 'mlp'] ['mlp'])
@@ -99,8 +99,8 @@ for ablation_types in "${ablation_types_lst[@]}"; do
             eval.window_style=fixed_start \
             eval.window_start_time=${window_start_time} \
             eval.batch_size=32 \
-            eval.results_save_dir=$WORK/results \
-            eval.metrics_save_dir=$WORK/ablations_results/${model_dirname}/${model_name_str}/${RUN_NAME} \
+            eval.results_save_dir=$STOR/results \
+            eval.metrics_save_dir=$STOR/ablations_results/${model_dirname}/${model_name_str}/${RUN_NAME} \
             eval.metrics_fname=metrics_${RUN_NAME} \
             eval.device=cuda:${gpu_index} \
             eval.rseed=123 \

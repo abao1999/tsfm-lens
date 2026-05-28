@@ -20,7 +20,7 @@ from tsfm_lens.moirai.circuitlens import CircuitLensMoirai
 from tsfm_lens.timesfm.circuitlens import CircuitLensTimesFM
 from tsfm_lens.toto.circuitlens import CircuitLensToto
 
-WORK_DIR = os.environ.get("WORK", "/work")
+WORK_DIR = os.environ.get("STOR", "/work")
 DATA_DIR = os.path.join(WORK_DIR, "data", "gift-eval")
 
 

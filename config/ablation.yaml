@@ -30,7 +30,7 @@ ablation_mosaic:
   model_type: seq2seq
 
   # Data configuration
-  data_dir: ${oc.env:WORK}/data
+  data_dir: ${oc.env:STOR}/data
   system: Lorenz
 
   # Experiment parameters
@@ -45,7 +45,7 @@ ablation_mosaic:
   n_heads: 12
 
   # Output configuration
-  output_dir: ${oc.env:WORK}/results/ablation_mosaic
+  output_dir: ${oc.env:STOR}/results/ablation_mosaic
 
 
 mlp_window_ablation:
@@ -58,7 +58,7 @@ mlp_window_ablation:
   t_1: 1
 
   # Output configuration
-  output_dir: ${oc.env:WORK}/results/mlp_window_ablation
+  output_dir: ${oc.env:STOR}/results/mlp_window_ablation
 
   # Device configuration
   device: cuda

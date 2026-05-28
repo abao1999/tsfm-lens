@@ -131,6 +131,8 @@ def plot_output_logits(
     enforced_vabs: float | None = None,
     show_colorbar: bool = True,
     show_yticks: bool = True,
+    show_xticks: bool = True,
+    show_title: bool = True,
 ) -> float:
     """
     Plot the logits produced by the MLP output of a specified layer.
@@ -170,12 +172,16 @@ def plot_output_logits(
     )
     if token_id_range is not None:
         ax.set_ylim(token_id_range[1], token_id_range[0])
-    ax.set_title(f"Layer {selected_layer_idx}", fontweight="bold", fontsize=16)
+    if show_title:
+        ax.set_title(f"Layer {selected_layer_idx}", fontweight="bold", fontsize=16)
     if show_yticks:
         ax.set_ylabel("Token ID", fontweight="bold", fontsize=12)
     else:
         ax.set_yticks([])
-    ax.set_xlabel("Timestep", fontweight="bold", fontsize=12)
+    if show_xticks:
+        ax.set_xlabel("Timestep", fontweight="bold", fontsize=12)
+    else:
+        ax.set_xticks([])
     ax.invert_yaxis()
 
     if show_colorbar:
@@ -840,16 +846,12 @@ def extract_projection_weights_Chronos2(
     attention_module = block.layer[attention_idx]
 
     if not hasattr(attention_module, "self_attention"):
-        raise ValueError(
-            f"Layer {selected_layer} {attention_type} attention does not expose `self_attention`."
-        )
+        raise ValueError(f"Layer {selected_layer} {attention_type} attention does not expose `self_attention`.")
 
     mha = attention_module.self_attention
     for proj_name in ("q", "k", "v", "o"):
         if not hasattr(mha, proj_name):
-            raise ValueError(
-                f"Layer {selected_layer} {attention_type} attention is missing `{proj_name}` projection."
-            )
+            raise ValueError(f"Layer {selected_layer} {attention_type} attention is missing `{proj_name}` projection.")
 
     if not hasattr(model, "config") or not hasattr(model.config, "num_heads"):
         raise ValueError("Chronos-2 model config must define `num_heads`.")

@@ -14,7 +14,7 @@ from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 # from chronos import ChronosPipeline
 from tsfm_lens.utils.data_utils import load_dyst_samples
 
-WORK_DIR = os.getenv("WORK", "")
+WORK_DIR = os.getenv("STOR", "")
 DATA_DIR = os.path.join(WORK_DIR, "data")
 
 # Check if GPU is available

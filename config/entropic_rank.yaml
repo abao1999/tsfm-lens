@@ -1,5 +1,5 @@
 entropic_rank:
-  work_dir: ${oc.env:WORK}
+  work_dir: ${oc.env:STOR}
   save_subdir: entropic_rank_v2
 
   data_dir: ${entropic_rank.work_dir}/data/base40

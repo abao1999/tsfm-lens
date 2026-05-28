@@ -30,10 +30,10 @@ ulimit -n 99999
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-gpu_index=2
+gpu_index=1
 term="all"
 max_datasets="null"
-data_dir="${WORK}/data/gift-eval"
+data_dir="${STOR}/data/gift-eval"
 batch_size=1024
 
 rseeds=(99)
@@ -46,7 +46,7 @@ model_type="chronos2"
 
 chosen_layers=(4 5 6 7)
 echo "chosen_layers: ${chosen_layers[*]}"
-chosen_layers_mlp=()
+chosen_layers_mlp=(4)
 echo "chosen_layers_mlp: ${chosen_layers_mlp[*]}"
 
 num_heads_per_layer_to_skip=3

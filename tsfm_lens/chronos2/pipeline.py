@@ -63,6 +63,10 @@ class Chronos2PipelineCustom:
         context = context.permute(0, 2, 1)  # type: ignore
         context_np = context.cpu().numpy()
 
+        # # if quantile_levels not in kwargs, then use self.quantiles
+        # if "quantile_levels" not in kwargs:
+        #     kwargs["quantile_levels"] = self.quantiles
+
         quantiles, mean_list = self.pipeline.predict_quantiles(  # type: ignore[attr-defined]
             context_np,
             prediction_length=prediction_length,

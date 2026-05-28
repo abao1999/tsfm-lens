@@ -14,7 +14,7 @@ from tsfm_lens.utils import make_ensemble_from_arrow_dir
 
 logger = logging.getLogger(__name__)
 
-WORK_DIR = os.getenv("WORK", "")
+WORK_DIR = os.getenv("STOR", "")
 DATA_DIR = os.path.join(WORK_DIR, "data")
 
 

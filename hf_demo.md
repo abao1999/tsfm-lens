@@ -35,10 +35,10 @@ cd external/timesfm && uv pip install -e . && cd ../..
 python hf_demo/app.py
 ```
 
-The app now uses `$WORK/data/gift-eval` explicitly. Make sure `WORK` is set before launch:
+The app now uses `$STOR/data/gift-eval` explicitly. Make sure `STOR` is set before launch:
 
 ```bash
-export WORK=/path/to/workdir
+export STOR=/path/to/workdir
 ```
 
 ## Hugging Face Spaces Deployment
@@ -55,7 +55,7 @@ Recommended setup:
 2. Set the Space app file to `hf_demo/app.py`.
 3. Copy or merge [requirements.txt](/stor/home/ab75733/tsfm-lens/hf_demo/requirements.txt) into the Space root `requirements.txt`.
 4. Make sure the repo package itself is installed in the Space build.
-5. Mount or copy the Gift-Eval dataset into `$WORK/data/gift-eval` and make sure `WORK` is set in the Space environment.
+5. Mount or copy the Gift-Eval dataset into `$STOR/data/gift-eval` and make sure `STOR` is set in the Space environment.
 
 If you want the Space to be truly standalone, you will need to vendor or publish the repo package and any local assets it depends on.
 
