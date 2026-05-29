@@ -5,6 +5,7 @@ pyrightconfig.json
 
 .claude/
 .cursor/
+**claude/**
 
 # data directory and files
 # data/
