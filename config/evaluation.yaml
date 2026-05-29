@@ -12,9 +12,10 @@ eval:
   metric_names:
     - mase
     - spearman
-    - pearson
     - ssim
-    - cross_spectral_phase_similarity
+    - mae
+    - mse
+    - smape
 
   split_coords: false
 
@@ -49,9 +50,10 @@ eval:
 
   # dysts specific configuration
   dysts:
-    num_subdirs: null
-    system_names:
-      - Lorenz
+    num_subdirs: null            # legacy; index-range fields below are preferred
+    system_names: null           # explicit whitelist; wins over indices when set
+    system_start_idx: 0
+    system_end_idx: 20
     num_samples_per_subdir: null
     subsample_interval: 1 # default to no subsampling
 

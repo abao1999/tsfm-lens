@@ -531,6 +531,7 @@ def run_chronos2_evaluation(
     dataset_properties_map: dict[str, dict],
     csv_path: str,
     batch_size: int = 100,
+    predict_batches_jointly: bool = True,
 ):
     logger.info(f"Evaluating {len(selected_dataset_names)} datasets")
     all_results = []
@@ -551,7 +552,7 @@ def run_chronos2_evaluation(
                         batch_size=batch_size,
                         metrics=METRICS,
                         use_multivariate_data=True,
-                        predict_batches_jointly=True,
+                        predict_batches_jointly=predict_batches_jointly,
                         device_map=str(pipeline.device),
                         torch_dtype="float32",
                     ),
@@ -873,6 +874,7 @@ def main(cfg):
             dataset_properties_map=dataset_properties_map,
             csv_path=csv_path,
             batch_size=cfg.eval.batch_size,
+            predict_batches_jointly=True,
         )
     else:
         run_standard_evaluation(

@@ -32,7 +32,7 @@ ulimit -n 99999
 gpu_index=2
 term="all"
 max_datasets="null"
-data_dir="${WORK}/data/gift-eval"
+data_dir="${STOR}/data/gift-eval"
 batch_size=512
 
 # Ablation grid parameters (bash arrays)

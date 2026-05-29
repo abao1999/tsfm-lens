@@ -131,6 +131,8 @@ def plot_output_logits(
     enforced_vabs: float | None = None,
     show_colorbar: bool = True,
     show_yticks: bool = True,
+    show_xticks: bool = True,
+    show_title: bool = True,
 ) -> float:
     """
     Plot the logits produced by the MLP output of a specified layer.
@@ -170,12 +172,16 @@ def plot_output_logits(
     )
     if token_id_range is not None:
         ax.set_ylim(token_id_range[1], token_id_range[0])
-    ax.set_title(f"Layer {selected_layer_idx}", fontweight="bold", fontsize=16)
+    if show_title:
+        ax.set_title(f"Layer {selected_layer_idx}", fontweight="bold", fontsize=16)
     if show_yticks:
         ax.set_ylabel("Token ID", fontweight="bold", fontsize=12)
     else:
         ax.set_yticks([])
-    ax.set_xlabel("Timestep", fontweight="bold", fontsize=12)
+    if show_xticks:
+        ax.set_xlabel("Timestep", fontweight="bold", fontsize=12)
+    else:
+        ax.set_xticks([])
     ax.invert_yaxis()
 
     if show_colorbar:
@@ -220,7 +226,7 @@ def compute_logit_metrics(
     probs = F.softmax(torch.from_numpy(logits), dim=-1).numpy()
 
     # Entropy and effective vocab size
-    entropy = -np.sum(probs * np.log(probs + 1e-10), axis=-1)
+    entropy = _row_entropy(probs, axis=-1, eps=1e-10)
     effective_vocab_size = np.sum(probs > threshold, axis=-1)
 
     # Top-k entropy
@@ -232,7 +238,7 @@ def compute_logit_metrics(
     top_k_logits_max = np.max(top_k_logits, axis=-1, keepdims=True)
     exp_top_k_logits = np.exp(top_k_logits - top_k_logits_max)
     top_k_probs = exp_top_k_logits / np.sum(exp_top_k_logits, axis=-1, keepdims=True)
-    top_k_entropy = -np.sum(top_k_probs * np.log(top_k_probs + 1e-10), axis=-1)
+    top_k_entropy = _row_entropy(top_k_probs, axis=-1, eps=1e-10)
 
     peak_counts, _ = peak_count_prominence(probs, height=0.02, min_distance=2, ensure_pmf=False)
 
@@ -840,16 +846,12 @@ def extract_projection_weights_Chronos2(
     attention_module = block.layer[attention_idx]
 
     if not hasattr(attention_module, "self_attention"):
-        raise ValueError(
-            f"Layer {selected_layer} {attention_type} attention does not expose `self_attention`."
-        )
+        raise ValueError(f"Layer {selected_layer} {attention_type} attention does not expose `self_attention`.")
 
     mha = attention_module.self_attention
     for proj_name in ("q", "k", "v", "o"):
         if not hasattr(mha, proj_name):
-            raise ValueError(
-                f"Layer {selected_layer} {attention_type} attention is missing `{proj_name}` projection."
-            )
+            raise ValueError(f"Layer {selected_layer} {attention_type} attention is missing `{proj_name}` projection.")
 
     if not hasattr(model, "config") or not hasattr(model.config, "num_heads"):
         raise ValueError("Chronos-2 model config must define `num_heads`.")
@@ -923,7 +925,15 @@ def _softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
 
 
 def _row_entropy(P: np.ndarray, axis: int = -1, eps: float = 1e-12) -> np.ndarray:
-    return -np.sum(P * np.log(P + eps), axis=axis)
+    # Compute in float64 and treat zero entries as 0 * log(0) = 0. Zeros are
+    # masked out before taking the log, which avoids the divide-by-zero /
+    # invalid-value warnings triggered by low-precision (e.g. float16) inputs.
+    # `eps` is accepted for backwards compatibility but no longer needed.
+    P = np.asarray(P, dtype=np.float64)
+    nonzero = P > 0
+    log_p = np.zeros_like(P)
+    np.log(P, out=log_p, where=nonzero)
+    return -np.sum(np.where(nonzero, P * log_p, 0.0), axis=axis)
 
 
 def _orth(A: np.ndarray, eps: float = 1e-10) -> np.ndarray:

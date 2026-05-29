@@ -3,7 +3,7 @@
 ulimit -n 99999
 
 dataset_name=base40
-data_dir=$WORK/data/$dataset_name
+data_dir=/ssd2/data/$dataset_name
 echo "data_dir: $data_dir"
 
 chronos_model_size=base
@@ -29,12 +29,14 @@ python scripts/logit_attribution.py \
     eval.data_dir=$data_dir \
     eval.dysts.system_names=null \
     eval.dysts.num_subdirs=null \
-    eval.num_test_instances=1 \
+    eval.num_test_instances=6 \
     eval.parallel_sample_reduction=median \
     eval.window_style=sampled \
     eval.batch_size=4 \
-    eval.metrics_save_dir=$WORK/logit_attribution_results/${model_dirname}/${model_name} \
+    eval.results_save_dir=/ssd2/logit_attribution \
+    eval.metrics_save_dir=/ssd2/logit_attribution_results/${model_dirname}/${model_name} \
     eval.metrics_fname=metrics \
-    eval.device=cuda:0 \
+    eval.device=cuda:1 \
     eval.rseed=42 \
+    eval.torch_dtype=float16 \
     "$@"

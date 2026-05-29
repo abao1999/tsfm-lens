@@ -1,6 +1,7 @@
 import logging
 import os
 import pickle
+from typing import Literal
 
 import hydra
 import matplotlib.pyplot as plt
@@ -14,7 +15,7 @@ from tsfm_lens.chronos.circuitlens import CircuitLensChronos
 # from chronos import ChronosPipeline
 from tsfm_lens.utils.data_utils import load_dyst_samples
 
-WORK_DIR = os.getenv("WORK", "")
+WORK_DIR = os.getenv("STOR", "")
 DATA_DIR = os.path.join(WORK_DIR, "data")
 
 # Check if GPU is available
@@ -74,7 +75,7 @@ def get_median_prediction(
     heads_to_ablate: list[tuple[int, int]],
     max_new_tokens: int = 64,
     num_samples: int = 12,
-    ablation_method: str = "zero",
+    ablation_method: Literal["zero", "mean"] = "zero",
     attention_type: str = "ca",
 ) -> torch.Tensor:
     """
@@ -108,7 +109,7 @@ def get_median_prediction(
 
         # Generate predictions
         predictions = pipeline.predict(  # type: ignore
-            context=input_series,
+            input_series,
             prediction_length=max_new_tokens,
             num_samples=num_samples,
             limit_prediction_length=False,
@@ -283,7 +284,6 @@ def load_rrt_induction_scores(
 
 def ablate_heads_sequentially(
     context: torch.Tensor,
-    ground_truth: torch.Tensor,
     pipeline: CircuitLensChronos,
     heads_to_ablate: list[tuple[int, int]],
     prediction_length: int,
@@ -297,7 +297,6 @@ def ablate_heads_sequentially(
 
     Args:
         context: Input context tensor
-        ground_truth: Ground truth values for calculating RMSE
         pipeline: Model pipeline
         heads_to_ablate: List of (layer_idx, head_idx) tuples to ablate sequentially
         prediction_length: Length of the prediction
@@ -343,7 +342,7 @@ def ablate_heads_sequentially(
         [],  # No heads ablated
         max_new_tokens=prediction_length,
         num_samples=num_samples,
-        ablation_method=base_ablation_method,
+        ablation_method=base_ablation_method,  # type: ignore[arg-type]
         attention_type=attention_type,
     )
 
@@ -378,7 +377,7 @@ def ablate_heads_sequentially(
             current_heads_to_ablate,
             max_new_tokens=prediction_length,
             num_samples=num_samples,
-            ablation_method=base_ablation_method,
+            ablation_method=base_ablation_method,  # type: ignore[arg-type]
             attention_type=attention_type,
         )
 
@@ -391,10 +390,10 @@ def ablate_heads_sequentially(
             median_pred.detach().cpu().numpy(),
         )
         # Handle possible NaNs (e.g., constant arrays) by mapping to zero distance
-        if np.isnan(corr):
+        if np.isnan(corr):  # type: ignore[arg-type]
             spearman_distance = 0.0
         else:
-            spearman_distance = 1.0 - float(corr)
+            spearman_distance = 1.0 - float(corr)  # type: ignore[arg-type]
 
         # Store results
         predictions.append(median_pred)
@@ -448,6 +447,8 @@ def main(cfg):
 
             # Load system data
             dyst_coords = load_dyst_samples(system_name, split_dir, one_dim_target=False, num_samples=1)
+            if dyst_coords is None:
+                raise ValueError(f"No data found for system: {system_name}")
             dyst_coords = torch.tensor(dyst_coords[sample_idx, selected_dim, :]).unsqueeze(0)
 
             for start_time in system_config.start_times:
@@ -509,7 +510,6 @@ def main(cfg):
 
                             predictions, rmse_values, spearman_distances = ablate_heads_sequentially(
                                 context,
-                                ground_truth,
                                 pipeline,
                                 top_k_heads,
                                 prediction_length,

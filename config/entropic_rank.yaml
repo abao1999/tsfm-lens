@@ -1,19 +1,13 @@
 entropic_rank:
-  work_dir: ${oc.env:WORK}
-  save_subdir: entropic_rank_v2
+  output_dir: null
 
-  data_dir: ${entropic_rank.work_dir}/data/base40
+  data_dir: null
   system_names: null
   num_subdirs: null
   num_samples_per_subdir: null
 
   context_length: 512
   prediction_length: 512
-  window_style: sampled
-  num_test_instances: 1
-  window_stride: 1
-  window_start_time: null
-  random_seed: ${eval.rseed}
 
   max_series_per_system: null
   max_windows_per_series: null
@@ -33,6 +27,10 @@ entropic_rank:
       - attn
     toto:
       - attn
+    moirai:
+      - attn
+    chronos2:
+      - attn
 
   epsilon: 1e-8
 
@@ -41,3 +39,5 @@ models_to_run:
   # - chronos_bolt
   # - timesfm
   # - toto
+  # - moirai
+  # - chronos2

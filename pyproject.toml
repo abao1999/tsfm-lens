@@ -82,3 +82,7 @@ ignore = [
     "F722"
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts", "."]
+

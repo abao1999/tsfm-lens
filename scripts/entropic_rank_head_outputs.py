@@ -18,8 +18,10 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm.auto import tqdm
 
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
+from tsfm_lens.chronos2.circuitlens import CircuitLensChronos2
 from tsfm_lens.chronos_bolt.circuitlens import CircuitLensBolt
 from tsfm_lens.dataset import TestDataset
+from tsfm_lens.moirai.circuitlens import CircuitLensMoirai
 from tsfm_lens.timesfm.circuitlens import CircuitLensTimesFM
 from tsfm_lens.toto.circuitlens import CircuitLensToto
 from tsfm_lens.utils import (
@@ -35,8 +37,10 @@ logger = logging.getLogger(__name__)
 MODEL_LABELS = {
     "chronos": "Chronos",
     "chronos_bolt": "Chronos-Bolt",
-    "timesfm": "TimesFM",
+    "timesfm": "TimesFM 2.5",
     "toto": "Toto",
+    "moirai": "Moirai 1.1",
+    "chronos2": "Chronos-2",
 }
 
 
@@ -160,11 +164,11 @@ def prepare_test_datasets(cfg: DictConfig) -> dict[str, TestDataset]:
             datasets=gluonts_datasets,
             context_length=cfg.entropic_rank.context_length,
             prediction_length=cfg.entropic_rank.prediction_length,
-            num_test_instances=cfg.entropic_rank.num_test_instances,
-            window_style=cfg.entropic_rank.window_style,
-            window_stride=cfg.entropic_rank.window_stride,
-            window_start_time=cfg.entropic_rank.window_start_time,
-            random_seed=cfg.entropic_rank.random_seed,
+            num_test_instances=cfg.eval.num_test_instances,
+            window_style=cfg.eval.window_style,
+            window_stride=cfg.eval.window_stride,
+            window_start_time=cfg.eval.window_start_time,
+            random_seed=cfg.eval.rseed,
         )
     return datasets
 
@@ -191,6 +195,10 @@ def instantiate_pipeline(
         pipeline = CircuitLensTimesFM(cfg.timesfm.model_id, device_map=str(device))
     elif model_name == "toto":
         pipeline = CircuitLensToto(cfg.toto.model_id, device_map=str(device))
+    elif model_name == "moirai":
+        pipeline = CircuitLensMoirai(cfg.moirai.model_id, device=str(device))
+    elif model_name == "chronos2":
+        pipeline = CircuitLensChronos2(cfg.chronos2.model_id, device=str(device))
     else:
         raise ValueError(f"Unsupported model: {model_name}")
 
@@ -227,7 +235,7 @@ def add_head_hooks(
     if model_name in {"chronos", "chronos_bolt"}:
         for attention_type in attention_types:
             getattr(pipeline, "add_head_attribution_hooks")(all_heads, attention_type=attention_type)
-    elif model_name in {"timesfm", "toto"}:
+    elif model_name in {"timesfm", "toto", "chronos2", "moirai"}:
         getattr(pipeline, "add_head_attribution_hooks")(all_heads)
     else:
         raise ValueError(f"Unsupported model for hook setup: {model_name}")
@@ -249,7 +257,7 @@ def extract_head_outputs(
         raw_outputs: dict[int, dict[int, list[torch.Tensor]]] = getattr(
             pipeline, f"{attention_type}_head_attribution_outputs", {}
         )
-    elif model_name in {"timesfm", "toto"}:
+    elif model_name in {"timesfm", "toto", "chronos2", "moirai"}:
         raw_outputs = getattr(pipeline, "head_attribution_outputs", {})
     else:
         raise ValueError(f"Unsupported model for extracting head outputs: {model_name}")
@@ -312,6 +320,22 @@ def run_inference_for_model(
             samples_per_batch=samples_per_batch,
             use_kv_cache=bool(cfg.toto.use_kv_cache),
         )
+    elif model_name == "chronos2":
+        context_tensor = context.to(device=device, dtype=torch.float32)
+        pipeline.predict(
+            context=context_tensor,
+            prediction_length=prediction_length,
+            batch_size=cfg.eval.batch_size,
+            limit_prediction_length=False,
+        )
+    elif model_name == "moirai":
+        context_tensor = context.to(device=device, dtype=torch.float32)
+        pipeline.predict(
+            context=context_tensor,
+            prediction_length=prediction_length,
+            num_samples=num_samples,
+            patch_size=cfg.moirai.patch_size,
+        )
     else:
         raise ValueError(f"Unsupported model for inference: {model_name}")
 
@@ -337,8 +361,8 @@ def process_model(
     layer_index_reference: dict[str, np.ndarray] = {}
 
     max_series_per_system = cfg.entropic_rank.max_series_per_system
-    max_windows_per_series = cfg.entropic_rank.max_windows_per_series
-    max_windows_total = cfg.entropic_rank.max_windows_total
+    max_windows_per_series = cfg.eval.num_test_instances
+    max_windows_total = cfg.eval.num_test_instances * len(datasets)
     total_windows = 0
 
     logger.info("Computing entropic rank for %s", model_name)
@@ -451,7 +475,7 @@ def process_model(
         )
 
 
-@hydra.main(config_path="../config", config_name="entropic_rank", version_base=None)
+@hydra.main(config_path="../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     logging.basicConfig(level=logging.INFO)
     logger.info("Configuration:\n%s", OmegaConf.to_yaml(cfg))
@@ -460,7 +484,7 @@ def main(cfg: DictConfig) -> None:
     plotting_config_path = original_cwd / "config" / "plotting.yaml"
     apply_custom_style(str(plotting_config_path))
 
-    set_seed(cfg.entropic_rank.random_seed)
+    set_seed(cfg.eval.rseed)
 
     device = torch.device(cfg.eval.device if torch.cuda.is_available() else "cpu")
     torch_dtype = getattr(torch, cfg.eval.torch_dtype)
@@ -471,15 +495,14 @@ def main(cfg: DictConfig) -> None:
     # datasets = dict(list(datasets.items())[:4])
     logger.info(f"Using {len(datasets)} datasets")
     num_test_instances = sum(test_dataset.num_test_instances for test_dataset in datasets.values())
-    num_test_instances_check = sum(len(test_dataset.datasets) for test_dataset in datasets.values())
-    assert num_test_instances == num_test_instances_check, "Number of test instances does not match"
     logger.info(f"Total number of test instances: {num_test_instances}")
 
-    save_root = os.path.join(cfg.entropic_rank.output_root, cfg.entropic_rank.save_subdir)
-    os.makedirs(save_root, exist_ok=True)
+    output_dir = cfg.entropic_rank.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Saving results to {output_dir}")
 
     for model_name in cfg.models_to_run:
-        model_dir = os.path.join(save_root, model_name)
+        model_dir = os.path.join(output_dir, model_name)
         logger.info("Processing %s. Data saved to %s", MODEL_LABELS.get(model_name, model_name), model_dir)
         process_model(model_name, cfg, datasets, model_dir, device, torch_dtype)
         logger.info("Finished processing %s. Data saved to %s", MODEL_LABELS.get(model_name, model_name), model_dir)
