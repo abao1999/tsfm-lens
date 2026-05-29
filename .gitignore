@@ -3,6 +3,9 @@
 .mypy.ini
 pyrightconfig.json
 
+.claude/
+.cursor/
+
 # data directory and files
 # data/
 *_debug.ipynb
