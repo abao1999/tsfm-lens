@@ -2,13 +2,13 @@
 Script to evaluate Chronos models on the evaluation dataset
 """
 
-import json
 import logging
 import os
-from functools import partial
+from pathlib import Path
 
 import hydra
 import torch
+from omegaconf import DictConfig
 
 from tsfm_lens.attribution import evaluate_attribution_with_full_outputs
 from tsfm_lens.chronos.circuitlens import CircuitLensChronos
@@ -16,11 +16,86 @@ from tsfm_lens.dataset import TestDataset
 from tsfm_lens.utils import (
     get_dim_from_dataset,
     get_eval_data_dict,
-    make_json_serializable,
+    get_gift_eval_data_dict,
     save_evaluation_results,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_test_datasets(
+    cfg: DictConfig, context_length: int
+) -> tuple[dict[str, TestDataset], dict[str, int], dict[str, int]]:
+    """Build `{system_name: TestDataset}` plus per-system dim and sample-count metadata.
+
+    Supports both dysts (default) and gift-eval, dispatching on `cfg.eval.dataset_name`.
+    For dysts: explicit `system_names` wins; otherwise selects subdirs via
+    `[system_start_idx:system_end_idx]` on the alphabetically-sorted subdir list.
+    """
+    dataset_name = cfg.eval.dataset_name
+    if dataset_name == "gift-eval":
+        gift = cfg.eval.gift_eval
+        names = gift.dataset_names
+        if names is None:
+            names = gift.short_datasets if gift.term == "short" else gift.medium_long_datasets
+        elif isinstance(names, str):
+            names = [names]
+        if gift.max_num_datasets is not None:
+            names = names[: gift.max_num_datasets]
+        logger.info(f"gift-eval datasets={names}, term={gift.term}")
+        test_data_dict = get_gift_eval_data_dict(
+            data_dir=cfg.eval.data_dir,
+            dataset_names=names,
+            term=gift.term,
+            to_univariate=gift.to_univariate,
+        )
+    else:
+        if cfg.eval.dysts.system_names:
+            subdir_names = list(cfg.eval.dysts.system_names)
+            logger.info(f"Using explicit system_names: {subdir_names}")
+        else:
+            data_dirs = cfg.eval.data_dir
+            if isinstance(data_dirs, str):
+                data_dirs = [data_dirs]
+            all_names = sorted({d.name for dd in data_dirs for d in Path(dd).iterdir() if d.is_dir()})
+            start = cfg.eval.dysts.system_start_idx
+            end = cfg.eval.dysts.system_end_idx
+            subdir_names = all_names[start:end]
+            logger.info(f"Selected systems [{start}:{end}] of {len(all_names)} = {subdir_names}")
+        test_data_dict = get_eval_data_dict(
+            cfg.eval.data_dir,
+            num_samples_per_subdir=cfg.eval.dysts.num_samples_per_subdir,
+            subdir_names=subdir_names,
+        )
+
+    logger.info(f"Loaded {len(test_data_dict)} test datasets: {list(test_data_dict.keys())}")
+
+    system_dims, n_system_samples = {}, {}
+    for system_name, datasets in test_data_dict.items():
+        if not datasets:
+            raise ValueError(f"No datasets found for system {system_name}")
+        sample = datasets[0]
+        if dataset_name == "gift-eval":
+            system_dims[system_name] = 1 if cfg.eval.gift_eval.to_univariate else sample.target_dim
+            n_system_samples[system_name] = len(sample.hf_dataset)
+        else:
+            system_dims[system_name] = get_dim_from_dataset(sample)
+            n_system_samples[system_name] = len(datasets)
+
+    test_datasets = {
+        name: TestDataset(
+            datasets=test_data_dict[name],
+            context_length=context_length,  # not used for GiftEvalDataset (pre-defined splits)
+            prediction_length=cfg.eval.prediction_length,
+            num_test_instances=cfg.eval.num_test_instances,
+            window_style=cfg.eval.window_style,
+            window_stride=cfg.eval.window_stride,
+            window_start_time=cfg.eval.window_start_time,
+            random_seed=cfg.eval.rseed,
+        )
+        for name in test_data_dict
+    }
+    return test_datasets, system_dims, n_system_samples
 
 
 @hydra.main(config_path="../config", config_name="config", version_base=None)
@@ -31,7 +106,6 @@ def main(cfg):
     assert isinstance(torch_dtype, torch.dtype)
     logger.info(f"Using device: {device}, with torch_dtype: {torch_dtype}")
 
-    # DLA save directory for results
     dla_dir = os.path.join(cfg.eval.results_save_dir, "logit_attribution")
     os.makedirs(dla_dir, exist_ok=True)
     logger.info(f"Saving logit attribution results to {dla_dir}")
@@ -50,14 +124,12 @@ def main(cfg):
     pipeline.model.eval()
 
     model_config = dict(vars(pipeline.model.config))
-
     context_length = model_config["context_length"]
     prediction_length = model_config["prediction_length"]
     logger.info(f"context_length: {context_length}")
     logger.info(f"model prediction_length: {prediction_length}")
     logger.info(f"eval prediction_length: {cfg.eval.prediction_length}")
 
-    # settings for  CircuitLensChronos to generate predictions
     prediction_kwargs = {
         "limit_prediction_length": cfg.chronos.limit_prediction_length,
         "do_sample": not cfg.chronos.deterministic,
@@ -75,71 +147,23 @@ def main(cfg):
 
     ##### 3. Add hooks for logit attribution #####
     pipeline.remove_all_hooks()
-    # Add hooks for head attribution
-    logger.info("Adding SA head attribution hooks")
-    pipeline.add_head_attribution_hooks(
-        [(i, j) for i in range(num_layers) for j in range(num_heads)],
-        attention_type="sa",
-    )
-    logger.info("Adding CA head attribution hooks")
-    pipeline.add_head_attribution_hooks(
-        [(i, j) for i in range(num_layers) for j in range(num_heads)],
-        attention_type="ca",
-    )
+    head_indices = [(i, j) for i in range(num_layers) for j in range(num_heads)]
+    for attention_type in ("sa", "ca"):
+        logger.info(f"Adding {attention_type.upper()} head attribution hooks")
+        pipeline.add_head_attribution_hooks(head_indices, attention_type=attention_type)
+
     logger.info("Adding MLP attribution hooks")
-    pipeline.add_mlp_attribution_hooks([i for i in range(num_layers)])
+    pipeline.add_mlp_attribution_hooks(list(range(num_layers)))
 
     logger.info("Adding Read Stream hooks")
-    pipeline.add_read_stream_hooks([i for i in range(num_layers)])
-
-    # logger.info("Adding SA attn output attribution hooks")
-    # pipeline.add_attn_attribution_hooks(
-    #     [i for i in range(num_layers)], attention_type="sa"
-    # )
-    # logger.info("Adding CA attn output attribution hooks")
-    # pipeline.add_attn_attribution_hooks(
-    #     [i for i in range(num_layers)], attention_type="ca"
-    # )
+    pipeline.add_read_stream_hooks(list(range(num_layers)))
 
     ##### 4. Load Datasets #####
-    test_data_dict = get_eval_data_dict(
-        cfg.eval.data_dir,
-        num_subdirs=cfg.eval.dysts.num_subdirs,
-        num_samples_per_subdir=cfg.eval.dysts.num_samples_per_subdir,
-        subdir_names=cfg.eval.dysts.system_names,
-    )
-    logger.info(f"Number of combined evaluation data subdirectories: {len(test_data_dict)}")
-    system_dims = {system_name: get_dim_from_dataset(test_data_dict[system_name][0]) for system_name in test_data_dict}
-    n_system_samples = {system_name: len(test_data_dict[system_name]) for system_name in test_data_dict}
+    test_datasets, system_dims, n_system_samples = _load_test_datasets(cfg, context_length)
+    logger.info(f"Running evaluation on {list(test_datasets.keys())}")
 
-    logger.info(f"Running evaluation on {list(test_data_dict.keys())}")
-
-    test_datasets = {
-        system_name: TestDataset(
-            datasets=test_data_dict[system_name],
-            context_length=context_length,  # NOTE: not used when dataset is GiftEvalDataset, since gift-eval has pre-defined splits
-            prediction_length=cfg.eval.prediction_length,
-            num_test_instances=cfg.eval.num_test_instances,
-            window_style=cfg.eval.window_style,
-            window_stride=cfg.eval.window_stride,
-            window_start_time=cfg.eval.window_start_time,
-            random_seed=cfg.eval.rseed,
-        )
-        for system_name in test_data_dict
-    }
-
-    ##### 5. Evaluation and Saving #####
-    save_eval_results_fn = partial(
-        save_evaluation_results,
-        metrics_metadata={
-            "system_dims": system_dims,
-            "n_system_samples": n_system_samples,
-        },  # pass metadata to be saved as columns in metrics csv
-        metrics_save_dir=cfg.eval.metrics_save_dir,
-        overwrite=cfg.eval.overwrite,
-    )
-
-    metrics, metrics_from_attribution, metrics_from_logits = evaluate_attribution_with_full_outputs(
+    ##### 5. Evaluation (per-system JSON metrics are saved inside the function) #####
+    metrics, _, _ = evaluate_attribution_with_full_outputs(
         pipeline,
         test_datasets,
         batch_size=cfg.eval.batch_size,
@@ -152,26 +176,21 @@ def main(cfg):
         rseed=cfg.eval.rseed,
         attribution_types={"read_stream"},
         save_dir=dla_dir,
-        save_predictions_from_attribution=False,
+        metrics_fname=cfg.eval.metrics_fname,
+        save_predictions_from_attribution=True,
     )
 
     logger.info(f"Saving metrics as csv to {cfg.eval.metrics_save_dir}")
-    save_eval_results_fn(metrics, metrics_fname=cfg.eval.metrics_fname)
-
-    # metrics_save_dir = cfg.eval.results_save_dir
-    metrics_save_dir = f"outputs/logit_attribution/rseed-{cfg.eval.rseed}"
-    logger.info(f"Saving all metrics as json to {metrics_save_dir}")
-    os.makedirs(metrics_save_dir, exist_ok=True)
-    metrics_files = {
-        f"{cfg.eval.metrics_fname}.json": metrics,
-        f"{cfg.eval.metrics_fname}_attribution.json": metrics_from_attribution,
-        f"{cfg.eval.metrics_fname}_logits.json": metrics_from_logits,
-    }
-
-    for fname, data in metrics_files.items():
-        data = make_json_serializable(data)
-        with open(os.path.join(metrics_save_dir, fname), "w") as f:
-            json.dump(data, f, indent=4)
+    save_evaluation_results(
+        metrics,
+        metrics_metadata={
+            "system_dims": system_dims,
+            "n_system_samples": n_system_samples,
+        },
+        metrics_save_dir=cfg.eval.metrics_save_dir,
+        overwrite=cfg.eval.overwrite,
+        metrics_fname=cfg.eval.metrics_fname,
+    )
 
 
 if __name__ == "__main__":
